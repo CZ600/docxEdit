@@ -1,0 +1,23 @@
+{
+  "name": "docx-vcomponent",
+  "version": "0.1.0",
+  "description": "A JS library that parses DOCX into a virtual component tree and writes paragraph-level text changes back to split OOXML runs.",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node --test",
+    "example": "node examples/basic.js"
+  },
+  "keywords": [
+    "docx",
+    "word",
+    "ooxml",
+    "virtual-dom"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@xmldom/xmldom": "^0.8.11",
+    "jszip": "^3.10.1"
+  }
+}
