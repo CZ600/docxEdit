@@ -5,7 +5,9 @@
   "main": "src/index.js",
   "scripts": {
     "test": "node --test",
-    "example": "node examples/basic.js"
+    "example": "node examples/basic.js",
+    "example:image": "node examples/image-check.js",
+    "example:text": "node examples/text-check.js"
   },
   "keywords": [
     "docx",

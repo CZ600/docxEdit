@@ -2,201 +2,374 @@
 
 const fs = require("node:fs/promises");
 const JSZip = require("jszip");
-const { DOMParser, XMLSerializer } = require("@xmldom/xmldom");
-const { createVNode } = require("./vnode");
-const { ParagraphTextModel } = require("./paragraph-text-model");
-const { childElements, isElement } = require("../shared/xml");
+const { XMLSerializer } = require("@xmldom/xmldom");
+const { applyDocumentPatch } = require("./patch");
+const {
+  DocumentPartController,
+  ImageController,
+  ParagraphController,
+  RunController,
+  StructuredEntryController,
+  TableCellController,
+  TableController,
+  TableRowController,
+  TextBoxController,
+  buildPartController,
+  buildLocation,
+  parseXmlString,
+} = require("./document-part");
+const {
+  createImageDescriptor,
+  ensureImageBuffer,
+  getRelsPath,
+  loadRelationships,
+  readImageBuffer,
+  resolveRelationshipTarget,
+} = require("./image-model");
+const { cloneVNode, createVNode, visitVNode } = require("./vnode");
+const { replaceAllInText } = require("./text-utils");
 
 const MAIN_DOCUMENT_PATH = "word/document.xml";
 
-function parseNode(element, paragraphControllers) {
-  if (isElement(element, "w:p")) {
-    const vnode = createVNode({
-      type: "paragraph",
-      props: {},
-      children: childElements(element)
-        .filter((child) => !isElement(child, "w:pPr"))
-        .map((child) => parseNode(child, paragraphControllers)),
-      source: element,
-    });
-
-    const textModel = new ParagraphTextModel(element);
-    const controller = new ParagraphController(vnode, textModel);
-    vnode.props.text = textModel.getText();
-    paragraphControllers.push(controller);
-    return vnode;
-  }
-
-  if (isElement(element, "w:r")) {
-    return createVNode({
-      type: "run",
-      props: {},
-      children: childElements(element).map((child) => parseNode(child, paragraphControllers)),
-      source: element,
-    });
-  }
-
-  if (isElement(element, "w:t")) {
-    return createVNode({
-      type: "text",
-      props: { text: element.textContent || "" },
-      children: [],
-      source: element,
-    });
-  }
-
-  if (isElement(element, "w:tbl")) {
-    return createVNode({
-      type: "table",
-      props: {},
-      children: childElements(element).map((child) => parseNode(child, paragraphControllers)),
-      source: element,
-    });
-  }
-
-  if (isElement(element, "w:tr")) {
-    return createVNode({
-      type: "table-row",
-      props: {},
-      children: childElements(element).map((child) => parseNode(child, paragraphControllers)),
-      source: element,
-    });
-  }
-
-  if (isElement(element, "w:tc")) {
-    return createVNode({
-      type: "table-cell",
-      props: {},
-      children: childElements(element).map((child) => parseNode(child, paragraphControllers)),
-      source: element,
-    });
-  }
-
-  if (isElement(element, "w:hyperlink")) {
-    return createVNode({
-      type: "hyperlink",
-      props: {},
-      children: childElements(element).map((child) => parseNode(child, paragraphControllers)),
-      source: element,
-    });
-  }
-
-  if (isElement(element, "w:tab")) {
-    return createVNode({
-      type: "tab",
-      props: { text: "\t" },
-      children: [],
-      source: element,
-    });
-  }
-
-  if (isElement(element, "w:br") || isElement(element, "w:cr")) {
-    return createVNode({
-      type: "break",
-      props: { text: "\n" },
-      children: [],
-      source: element,
-    });
-  }
-
-  return createVNode({
-    type: element.nodeName.replace(/^w:/, ""),
-    props: {},
-    children: childElements(element).map((child) => parseNode(child, paragraphControllers)),
-    source: element,
-  });
-}
-
-class ParagraphController {
-  constructor(vnode, textModel) {
-    this.vnode = vnode;
-    this.textModel = textModel;
-  }
-
-  getText() {
-    const text = this.textModel.getText();
-    this.vnode.props.text = text;
-    return text;
-  }
-
-  setText(nextText) {
-    this.textModel.setText(nextText);
-    this.vnode.props.text = this.textModel.getText();
-    return this;
-  }
-
-  replace(searchValue, replacement) {
-    const count = this.textModel.replace(searchValue, replacement);
-    this.vnode.props.text = this.textModel.getText();
-    return count;
-  }
-
-  replaceAll(searchValue, replacement) {
-    const count = this.textModel.replaceAll(searchValue, replacement);
-    this.vnode.props.text = this.textModel.getText();
-    return count;
-  }
-}
-
 class VirtualWordDocument {
-  constructor({ zip, xmlDocument, rootVNode, paragraphControllers }) {
+  constructor({ zip, partsData, relationshipsByPartPath }) {
     this.zip = zip;
-    this.xmlDocument = xmlDocument;
-    this.rootVNode = rootVNode;
-    this.paragraphControllers = paragraphControllers;
+    this.partsData = partsData;
+    this.relationshipsByPartPath = relationshipsByPartPath;
+    this.rootVNode = null;
+    this.parts = [];
+    this.nodeById = new Map();
+    this.metadataById = new Map();
+    this.partRootByPath = new Map();
+    this.documentNodeId = null;
+    this.rebuildFromXml();
   }
 
   static async load(input) {
     const sourceBuffer = Buffer.isBuffer(input) ? input : await fs.readFile(input);
     const zip = await JSZip.loadAsync(sourceBuffer);
-    const documentXml = await zip.file(MAIN_DOCUMENT_PATH).async("string");
-    const xmlDocument = new DOMParser().parseFromString(documentXml, "application/xml");
-    const paragraphControllers = [];
-    const documentElement = xmlDocument.documentElement;
-    const bodyElement = childElements(documentElement).find((node) => isElement(node, "w:body"));
+    const partDescriptors = await loadSupportedPartDescriptors(zip);
+    const partsData = [];
+    const relationshipsByPartPath = new Map();
 
-    const rootVNode = createVNode({
+    for (const descriptor of partDescriptors) {
+      const xml = await zip.file(descriptor.path).async("string");
+      partsData.push({
+        path: descriptor.path,
+        type: descriptor.type,
+        xmlDocument: parseXmlString(xml),
+      });
+
+      const relsPath = getRelsPath(descriptor.path);
+      const relsXml = zip.file(relsPath) ? await zip.file(relsPath).async("string") : null;
+      const relationships = loadRelationships(descriptor.path, relsXml);
+      for (const relationship of relationships.relationships.values()) {
+        relationship.partPath = descriptor.path;
+      }
+      relationshipsByPartPath.set(descriptor.path, relationships);
+    }
+
+    return new VirtualWordDocument({ zip, partsData, relationshipsByPartPath });
+  }
+
+  rebuildFromXml() {
+    this.metadataById = new Map();
+    this.partRootByPath = new Map();
+
+    const builtParts = this.partsData.map((partData) =>
+      buildPartController({
+        doc: this,
+        path: partData.path,
+        type: partData.type,
+        xmlDocument: partData.xmlDocument,
+        metadataById: this.metadataById,
+      }),
+    );
+
+    this.rootVNode = createVNode({
+      id: this.documentNodeId,
       type: "document",
       props: {},
-      children: bodyElement
-        ? childElements(bodyElement).map((child) => parseNode(child, paragraphControllers))
-        : [],
-      source: documentElement,
+      children: builtParts.map((part) => part.rootVNode),
+      source: null,
+    });
+    this.documentNodeId = this.rootVNode.id;
+
+    this.nodeById = new Map();
+    visitVNode(this.rootVNode, (node, parent) => {
+      node.parent = parent;
+      this.nodeById.set(node.id, node);
+      if (!this.metadataById.has(node.id)) {
+        if (node.type === "document") {
+          this.metadataById.set(node.id, {
+            partPath: null,
+            partType: "document",
+            location: "document",
+            specialType: null,
+          });
+          return;
+        }
+        const parentMetadata = parent ? this.metadataById.get(parent.id) : null;
+        if (parentMetadata) {
+          this.metadataById.set(node.id, {
+            partPath: parentMetadata.partPath,
+            partType: parentMetadata.partType,
+            location: buildLocation(parentMetadata.partType, []),
+            specialType: node.props.specialType || null,
+          });
+        }
+      }
     });
 
-    return new VirtualWordDocument({
-      zip,
-      xmlDocument,
-      rootVNode,
-      paragraphControllers,
+    this.parts = builtParts.map((part) => {
+      const controller = new DocumentPartController(this, part.rootVNode.id, part.path, part.type);
+      this.partRootByPath.set(part.path, part.rootVNode.source);
+      return controller;
     });
+  }
+
+  describeImage(partPath, relId) {
+    const relationships = this.relationshipsByPartPath.get(partPath);
+    if (!relationships) return null;
+    const relationship = relationships.relationships.get(relId);
+    if (!relationship) return null;
+    relationship.partPath = partPath;
+    return createImageDescriptor({ relId, relationship, zip: this.zip });
+  }
+
+  async getImageData(nodeId) {
+    const node = this.getNodeById(nodeId);
+    const mediaPath = node.props.mediaPath || null;
+    if (!mediaPath) return null;
+    return readImageBuffer(this.zip, mediaPath);
   }
 
   toComponentTree() {
-    return this.rootVNode;
+    return cloneVNode(this.rootVNode);
+  }
+
+  cloneNodeById(nodeId) {
+    return cloneVNode(this.getNodeById(nodeId));
+  }
+
+  getNodeById(nodeId) {
+    const node = this.nodeById.get(nodeId);
+    if (!node) throw new Error(`Node ${nodeId} is no longer available.`);
+    return node;
+  }
+
+  getNodeMetadata(nodeId) {
+    return this.metadataById.get(nodeId) || null;
+  }
+
+  patchWithMutableTree(mutator, { skipIfUnchanged = null } = {}) {
+    const nextRoot = this.toComponentTree();
+    mutator(nextRoot);
+    if (skipIfUnchanged && skipIfUnchanged()) return this;
+    return this.patch(nextRoot);
+  }
+
+  patch(nextTree) {
+    const result = applyDocumentPatch({
+      currentRoot: this.rootVNode,
+      nextRoot: nextTree,
+      partRootByPath: this.partRootByPath,
+      doc: this,
+    });
+    this.rebuildFromXml();
+    return result;
+  }
+
+  getParts() {
+    return this.parts.slice();
+  }
+
+  getBody() {
+    return this.parts.find((part) => part.type === "body");
+  }
+
+  getHeaders() {
+    return this.parts.filter((part) => part.type === "header");
+  }
+
+  getFooters() {
+    return this.parts.filter((part) => part.type === "footer");
   }
 
   getParagraphs() {
-    return this.paragraphControllers;
+    return this.getDescendantControllers(this.rootVNode.id, "paragraph");
   }
 
   getParagraph(index) {
-    return this.paragraphControllers[index];
+    return this.getParagraphs()[index];
   }
 
-  replaceAll(searchValue, replacement) {
+  getTables() {
+    return this.getDescendantControllers(this.rootVNode.id, "table");
+  }
+
+  getTextBoxes() {
+    return this.getDescendantControllers(this.rootVNode.id, "text-box");
+  }
+
+  getImages() {
+    return this.getDescendantControllers(this.rootVNode.id, "image");
+  }
+
+  getFootnotes() {
+    return this.getDescendantControllers(this.rootVNode.id, "footnote").filter((entry) => !entry.metadata.specialType);
+  }
+
+  getEndnotes() {
+    return this.getDescendantControllers(this.rootVNode.id, "endnote").filter((entry) => !entry.metadata.specialType);
+  }
+
+  getComments() {
+    return this.getDescendantControllers(this.rootVNode.id, "comment").filter((entry) => !entry.metadata.specialType);
+  }
+
+  replaceAll(searchValue, replacement, { partTypes = null } = {}) {
     let count = 0;
-
-    for (const paragraph of this.paragraphControllers) {
-      count += paragraph.replaceAll(searchValue, replacement);
-    }
-
+    this.patchWithMutableTree((nextRoot) => {
+      visitVNode(nextRoot, (node) => {
+        if (node.type !== "paragraph") return;
+        const metadata = this.metadataById.get(node.id);
+        if (!metadata) return;
+        if (partTypes && !partTypes.includes(metadata.partType)) return;
+        const result = replaceAllInText(node.props.text || "", searchValue, replacement);
+        if (result.count > 0) {
+          node.props.text = result.text;
+          count += result.count;
+        }
+      });
+    }, { skipIfUnchanged: () => count === 0 });
     return count;
   }
 
+  getDirectChildControllers(nodeId, type) {
+    const node = this.getNodeById(nodeId);
+    return node.children.filter((child) => child.type === type).map((child) => this.createControllerForNode(child.id));
+  }
+
+  getDescendantControllers(nodeId, type) {
+    const root = this.getNodeById(nodeId);
+    const results = [];
+    for (const child of root.children) {
+      collectControllersByType(this, child, type, results);
+    }
+    return results;
+  }
+
+  createControllerForNode(nodeId) {
+    const node = this.getNodeById(nodeId);
+    switch (node.type) {
+      case "paragraph":
+        return new ParagraphController(this, nodeId);
+      case "run":
+        return new RunController(this, nodeId);
+      case "image":
+        return new ImageController(this, nodeId);
+      case "table":
+        return new TableController(this, nodeId);
+      case "table-row":
+        return new TableRowController(this, nodeId);
+      case "table-cell":
+        return new TableCellController(this, nodeId);
+      case "text-box":
+        return new TextBoxController(this, nodeId);
+      case "comment":
+      case "footnote":
+      case "endnote":
+        return new StructuredEntryController(this, nodeId);
+      default:
+        throw new Error(`Unsupported controller node type "${node.type}".`);
+    }
+  }
+
+  getRelationships(partPath) {
+    let relationships = this.relationshipsByPartPath.get(partPath);
+    if (!relationships) {
+      relationships = loadRelationships(partPath, null);
+      this.relationshipsByPartPath.set(partPath, relationships);
+    }
+    return relationships;
+  }
+
+  createOrUpdateImage(partPath, imageNode) {
+    const relationships = this.getRelationships(partPath);
+    const buffer = ensureImageBuffer(imageNode.props.data || Buffer.alloc(0));
+    let relId = imageNode.props.relId;
+    let mediaPath = imageNode.props.mediaPath;
+
+    if (!relId) {
+      relId = nextRelationshipId(relationships);
+    }
+
+    if (!mediaPath) {
+      mediaPath = this.allocateMediaPath(imageNode.props.filename, imageNode.props.contentType);
+    }
+
+    const target = makeRelativeTarget(partPath, mediaPath);
+    relationships.relationships.set(relId, {
+      id: relId,
+      type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+      target,
+      targetMode: null,
+      partPath,
+    });
+
+    this.zip.file(mediaPath, buffer);
+    imageNode.props.relId = relId;
+    imageNode.props.mediaPath = mediaPath;
+    imageNode.props.target = target;
+    imageNode.props.filename = imageNode.props.filename || mediaPath.split("/").pop();
+    return imageNode.props;
+  }
+
+  removeImageReference(partPath, relId) {
+    if (!relId) return;
+    const relationships = this.getRelationships(partPath);
+    const relationship = relationships.relationships.get(relId);
+    if (!relationship) return;
+    relationships.relationships.delete(relId);
+    const mediaPath = resolveRelationshipTarget(partPath, relationship.target);
+    if (!this.isMediaPathReferenced(mediaPath)) {
+      this.zip.remove(mediaPath);
+    }
+  }
+
+  isMediaPathReferenced(mediaPath) {
+    for (const [partPath, relationships] of this.relationshipsByPartPath.entries()) {
+      for (const relationship of relationships.relationships.values()) {
+        if (resolveRelationshipTarget(partPath, relationship.target) === mediaPath) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  allocateMediaPath(filename, contentType) {
+    const ext = (filename && /\.[^.]+$/.exec(filename)) ? filename.split(".").pop() : extensionForContentType(contentType);
+    let index = 1;
+    while (this.zip.file(`word/media/image${index}.${ext}`)) {
+      index += 1;
+    }
+    return `word/media/image${index}.${ext}`;
+  }
+
   async toBuffer() {
-    const xml = new XMLSerializer().serializeToString(this.xmlDocument);
-    this.zip.file(MAIN_DOCUMENT_PATH, xml);
+    for (const part of this.partsData) {
+      const xml = new XMLSerializer().serializeToString(part.xmlDocument);
+      this.zip.file(part.path, xml);
+    }
+
+    for (const relationships of this.relationshipsByPartPath.values()) {
+      syncRelationshipsXml(relationships);
+      const xml = new XMLSerializer().serializeToString(relationships.xmlDocument);
+      this.zip.file(relationships.relsPath, xml);
+    }
+
     return this.zip.generateAsync({ type: "nodebuffer" });
   }
 
@@ -207,8 +380,70 @@ class VirtualWordDocument {
   }
 }
 
+function collectControllersByType(doc, node, type, results) {
+  if (node.type === type) results.push(doc.createControllerForNode(node.id));
+  for (const child of node.children) {
+    collectControllersByType(doc, child, type, results);
+  }
+}
+
+function nextRelationshipId(relationships) {
+  let max = 0;
+  for (const relId of relationships.relationships.keys()) {
+    const match = /^rId(\d+)$/.exec(relId);
+    if (match) max = Math.max(max, Number(match[1]));
+  }
+  return `rId${max + 1}`;
+}
+
+function makeRelativeTarget(partPath, absolutePath) {
+  const partDir = partPath.split("/").slice(0, -1);
+  const targetParts = absolutePath.split("/");
+  while (partDir.length > 0 && targetParts.length > 0 && partDir[0] === targetParts[0]) {
+    partDir.shift();
+    targetParts.shift();
+  }
+  return `${partDir.map(() => "..").join("/")}${partDir.length > 0 ? "/" : ""}${targetParts.join("/")}`;
+}
+
+function extensionForContentType(contentType) {
+  if (contentType === "image/png") return "png";
+  if (contentType === "image/jpeg") return "jpg";
+  if (contentType === "image/gif") return "gif";
+  return "bin";
+}
+
+function syncRelationshipsXml(relationships) {
+  const documentElement = relationships.xmlDocument.documentElement;
+  while (documentElement.firstChild) {
+    documentElement.removeChild(documentElement.firstChild);
+  }
+  const sorted = Array.from(relationships.relationships.values()).sort((a, b) => a.id.localeCompare(b.id));
+  for (const relationship of sorted) {
+    const node = relationships.xmlDocument.createElementNS(documentElement.namespaceURI, "Relationship");
+    node.setAttribute("Id", relationship.id);
+    node.setAttribute("Type", relationship.type);
+    node.setAttribute("Target", relationship.target);
+    if (relationship.targetMode) {
+      node.setAttribute("TargetMode", relationship.targetMode);
+    }
+    documentElement.appendChild(node);
+  }
+}
+
+async function loadSupportedPartDescriptors(zip) {
+  const fileNames = Object.keys(zip.files).filter((name) => !zip.files[name].dir).sort();
+  const descriptors = [];
+  if (zip.file(MAIN_DOCUMENT_PATH)) descriptors.push({ path: MAIN_DOCUMENT_PATH, type: "body" });
+  for (const path of fileNames.filter((name) => /^word\/header\d+\.xml$/.test(name))) descriptors.push({ path, type: "header" });
+  for (const path of fileNames.filter((name) => /^word\/footer\d+\.xml$/.test(name))) descriptors.push({ path, type: "footer" });
+  for (const path of fileNames.filter((name) => /^word\/footnotes\d*\.xml$/.test(name))) descriptors.push({ path, type: "footnotes" });
+  for (const path of fileNames.filter((name) => /^word\/endnotes\d*\.xml$/.test(name))) descriptors.push({ path, type: "endnotes" });
+  for (const path of fileNames.filter((name) => /^word\/comments\d*\.xml$/.test(name))) descriptors.push({ path, type: "comments" });
+  return descriptors;
+}
+
 module.exports = {
   MAIN_DOCUMENT_PATH,
-  ParagraphController,
   VirtualWordDocument,
 };

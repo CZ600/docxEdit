@@ -6,59 +6,10 @@ const {
   isElement,
   setElementText,
 } = require("../shared/xml");
+const { replaceAllInText, replaceFirstInText } = require("./text-utils");
 
 function isWritableToken(token) {
   return token.kind === "text";
-}
-
-function countStringOccurrences(text, searchValue) {
-  if (searchValue.length === 0) {
-    throw new Error("searchValue must not be empty.");
-  }
-
-  let count = 0;
-  let cursor = 0;
-
-  while (true) {
-    const index = text.indexOf(searchValue, cursor);
-    if (index === -1) {
-      return count;
-    }
-
-    count += 1;
-    cursor = index + searchValue.length;
-  }
-}
-
-function replaceAllStrings(text, searchValue, replacement) {
-  const count = countStringOccurrences(text, searchValue);
-  if (count === 0) {
-    return { count: 0, text };
-  }
-
-  return {
-    count,
-    text: text.split(searchValue).join(replacement),
-  };
-}
-
-function replaceWithRegExp(text, matcher, replacement) {
-  if (!matcher.global) {
-    throw new Error("RegExp searchValue must use the global flag.");
-  }
-
-  let count = 0;
-  const nextText = text.replace(matcher, (...args) => {
-    count += 1;
-
-    if (typeof replacement === "function") {
-      return replacement(...args);
-    }
-
-    return replacement;
-  });
-
-  return { count, text: nextText };
 }
 
 function collectRunTokens(runElement, tokens) {
@@ -238,10 +189,7 @@ class ParagraphTextModel {
 
   replaceAll(searchValue, replacement) {
     const currentText = this.getText();
-    const result =
-      searchValue instanceof RegExp
-        ? replaceWithRegExp(currentText, searchValue, replacement)
-        : replaceAllStrings(currentText, searchValue, replacement);
+    const result = replaceAllInText(currentText, searchValue, replacement);
 
     if (result.count > 0) {
       this.setText(result.text);
@@ -251,28 +199,14 @@ class ParagraphTextModel {
   }
 
   replace(searchValue, replacement) {
-    if (searchValue instanceof RegExp) {
-      throw new Error("replace() currently supports string searchValue only. Use replaceAll() for RegExp.");
-    }
-
-    if (typeof searchValue !== "string" || searchValue.length === 0) {
-      throw new Error("searchValue must be a non-empty string.");
-    }
-
     const currentText = this.getText();
-    const index = currentText.indexOf(searchValue);
+    const result = replaceFirstInText(currentText, searchValue, replacement);
 
-    if (index === -1) {
-      return 0;
+    if (result.count > 0) {
+      this.setText(result.text);
     }
 
-    const nextText =
-      currentText.slice(0, index) +
-      replacement +
-      currentText.slice(index + searchValue.length);
-
-    this.setText(nextText);
-    return 1;
+    return result.count;
   }
 }
 
