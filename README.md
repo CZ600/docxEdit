@@ -1,6 +1,6 @@
-# docx-vcomponent
+# docx-edit
 
-一个基于 JavaScript 的 `.docx` 解析与修改库。
+一个基于 JavaScript 的 `.docx` 解析与修改库。相比于传统的 `.docx` 解析库，本项目的优势在于：对于word动态修改更加友好的支持，支持全文高精度匹配和替换等操作。
 
 当前版本已经实现：
 
@@ -25,13 +25,15 @@
 ## 安装
 
 ```bash
-npm install
+npm install docx-edit
 ```
+
+本库当前使用 CommonJS 导出，对应 Node.js 环境建议为 `>=18`。
 
 ## 快速开始
 
 ```js
-const { loadDocx } = require("./src");
+const { loadDocx } = require("docx-edit");
 
 async function main() {
   const doc = await loadDocx("./sample.docx");
@@ -176,7 +178,7 @@ const {
   TableCellController,
   TextBoxController,
   StructuredEntryController,
-} = require("./src");
+} = require("docx-edit");
 ```
 
 ## 文档 API
@@ -410,7 +412,7 @@ comment.replaceAll("原文", "新文");
 ### 1. 修改已有段落文本
 
 ```js
-const { loadDocx } = require("./src");
+const { loadDocx } = require("docx-edit");
 
 const doc = await loadDocx("./sample.docx");
 const tree = doc.toComponentTree();
@@ -425,7 +427,7 @@ await doc.saveAs("./sample.modified.docx");
 ### 2. 插入一个新段落
 
 ```js
-const { createVNode, loadDocx } = require("./src");
+const { createVNode, loadDocx } = require("docx-edit");
 
 const doc = await loadDocx("./sample.docx");
 const tree = doc.toComponentTree();

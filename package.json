@@ -1,8 +1,16 @@
 {
-  "name": "docx-vcomponent",
+  "name": "docx-edit",
   "version": "0.1.0",
   "description": "A JS library that parses DOCX into a virtual component tree and writes paragraph-level text changes back to split OOXML runs.",
   "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --test",
     "example": "node examples/basic.js",
@@ -10,17 +18,32 @@
     "example:image-layout": "node examples/image-layout-check.js",
     "example:text": "node examples/text-check.js",
     "example:sample": "node examples/sample-docx-check.js",
-    "example:table-style": "node examples/table-style-check.js"
+    "example:table-style": "node examples/table-style-check.js",
+    "pack:check": "npm pack --dry-run",
+    "prepublishOnly": "npm test && npm run pack:check"
   },
   "keywords": [
     "docx",
     "word",
     "ooxml",
-    "virtual-dom"
+    "virtual-dom",
+    "docx-editor",
+    "document-processing"
   ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CZ600/docxEdit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CZ600/docxEdit/issues"
+  },
+  "homepage": "https://github.com/CZ600/docxEdit#readme",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "@xmldom/xmldom": "^0.8.11",
     "jszip": "^3.10.1"
