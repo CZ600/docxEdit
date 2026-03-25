@@ -163,3 +163,95 @@ test("doc.patch can insert testImage.jpg and delete an existing image in the sam
   assert.deepEqual(reloaded.getImages()[0].getSize(), { width: "555000", height: "444000" });
   assert.equal(reloaded.getBody().getParagraphs().at(-1).getText(), "图2 新增图片题注");
 });
+
+test("image layout supports anchor wrapping positioning and paragraph centering", async () => {
+  const replacementBuffer = await fs.readFile(TEST_IMAGE_2);
+  const doc = await loadDocx(await buildImageDocx());
+  const image = doc.getImages()[0];
+
+  image.replace({
+    data: replacementBuffer,
+    filename: "testImage2.jpg",
+    contentType: "image/jpeg",
+    width: "1200000",
+    height: "960000",
+    alt: "layout-image",
+    layout: {
+      mode: "anchor",
+      wrap: "tight",
+      distances: {
+        top: "0",
+        bottom: "0",
+        left: "114300",
+        right: "114300",
+      },
+      positionH: {
+        relativeFrom: "margin",
+        align: "center",
+      },
+      positionV: {
+        relativeFrom: "paragraph",
+        offset: "0",
+      },
+      allowOverlap: true,
+      layoutInCell: true,
+    },
+    paragraphAlignment: "center",
+  });
+
+  assert.deepEqual(image.getLayout(), {
+    mode: "anchor",
+    wrap: "tight",
+    distances: {
+      top: "0",
+      bottom: "0",
+      left: "114300",
+      right: "114300",
+    },
+    behindDoc: false,
+    positionH: {
+      relativeFrom: "margin",
+      align: "center",
+    },
+    positionV: {
+      relativeFrom: "paragraph",
+      offset: "0",
+    },
+    allowOverlap: true,
+    layoutInCell: true,
+  });
+  assert.equal(doc.getBody().getParagraph(0).getStyle().alignment, "center");
+
+  const outputBuffer = await doc.toBuffer();
+  const reloaded = await loadDocx(outputBuffer);
+  const reloadedImage = reloaded.getImages()[0];
+  assert.deepEqual(reloadedImage.getSize(), { width: "1200000", height: "960000" });
+  assert.deepEqual(reloadedImage.getLayout(), {
+    mode: "anchor",
+    wrap: "tight",
+    distances: {
+      top: "0",
+      bottom: "0",
+      left: "114300",
+      right: "114300",
+    },
+    behindDoc: false,
+    allowOverlap: true,
+    layoutInCell: true,
+    positionH: {
+      relativeFrom: "margin",
+      align: "center",
+    },
+    positionV: {
+      relativeFrom: "paragraph",
+      offset: "0",
+    },
+  });
+  assert.equal(reloaded.getBody().getParagraph(0).getStyle().alignment, "center");
+
+  const zip = await JSZip.loadAsync(outputBuffer);
+  const documentXml = await zip.file("word/document.xml").async("string");
+  assert.match(documentXml, /<wp:anchor/);
+  assert.match(documentXml, /<wp:wrapTight/);
+  assert.match(documentXml, /<wp:align>center<\/wp:align>/);
+});

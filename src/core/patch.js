@@ -9,6 +9,7 @@ const {
   applyTableStyle,
   stylesEqual,
 } = require("./style-model");
+const { createMathElement, formatMathPlaceholder, updateMathElement } = require("./math-model");
 const { assignVNodeSource, createVNode } = require("./vnode");
 const { childElements, createWordElement, isElement, setElementText } = require("../shared/xml");
 
@@ -25,9 +26,10 @@ const ALLOWED_CHILDREN = new Map([
   ["comment", new Set(["paragraph", "table"])],
   ["footnote", new Set(["paragraph", "table"])],
   ["endnote", new Set(["paragraph", "table"])],
-  ["paragraph", new Set(["run", "hyperlink"])],
+  ["paragraph", new Set(["run", "hyperlink", "math"])],
   ["run", new Set(["text", "tab", "break", "text-box", "image"])],
   ["hyperlink", new Set(["run"])],
+  ["math", new Set([])],
   ["text-box", new Set(["paragraph", "table"])],
   ["table", new Set(["table-row"])],
   ["table-row", new Set(["table-cell"])],
@@ -93,7 +95,11 @@ function syncNodeProps(currentNode, nextNode, hostElement, operations, context) 
     }
     const nextText = nextNode.props.text;
     const currentText = currentNode.props.text;
-    if (typeof nextText === "string" && nextText !== currentText) {
+    const hasStructuredInlineContent =
+      currentNode.children.some((child) => child.type === "math") ||
+      nextNode.children.some((child) => child.type === "math");
+
+    if (!hasStructuredInlineContent && typeof nextText === "string" && nextText !== currentText) {
       new ParagraphTextModel(hostElement).setText(nextText);
       operations.push({ type: "PROPS/TEXT_UPDATE", nodeId: currentNode.id, nodeType: currentNode.type });
       return true;
@@ -161,6 +167,36 @@ function syncNodeProps(currentNode, nextNode, hostElement, operations, context) 
     return true;
   }
 
+  if (nextNode.type === "math") {
+    const before = JSON.stringify({
+      text: currentNode.props.text || "",
+      display: currentNode.props.display || "inline",
+      style: currentNode.props.style || {},
+    });
+    const after = JSON.stringify({
+      text: nextNode.props.text || "",
+      display: nextNode.props.display || "inline",
+      style: nextNode.props.style || {},
+    });
+
+    if (before !== after) {
+      const expectedTagName = nextNode.props.display === "block" ? "m:oMathPara" : "m:oMath";
+      let targetElement = hostElement;
+
+      if (hostElement.nodeName !== expectedTagName) {
+        targetElement = createHostElement(nextNode, hostElement.ownerDocument);
+        hostElement.parentNode.replaceChild(targetElement, hostElement);
+        assignVNodeSource(nextNode, targetElement);
+      }
+
+      updateMathElement(targetElement, nextNode.props);
+      nextNode.props.placeholder = formatMathPlaceholder(nextNode.props.text || "");
+      operations.push({ type: "PROPS/TEXT_UPDATE", nodeId: currentNode.id, nodeType: currentNode.type });
+    }
+
+    return true;
+  }
+
   if (SPECIAL_ENTRY_TYPES.has(nextNode.type)) {
     changed = syncSpecialAttributes(currentNode, nextNode, hostElement) || changed;
   }
@@ -196,6 +232,7 @@ function syncImageNode(currentNode, nextNode, hostElement, context) {
     width: currentNode.props.width,
     height: currentNode.props.height,
     alt: currentNode.props.alt,
+    layout: currentNode.props.layout,
     contentType: currentNode.props.contentType,
     relId: currentNode.props.relId,
     mediaPath: currentNode.props.mediaPath,
@@ -206,6 +243,7 @@ function syncImageNode(currentNode, nextNode, hostElement, context) {
     width: nextNode.props.width,
     height: nextNode.props.height,
     alt: nextNode.props.alt,
+    layout: nextNode.props.layout,
     contentType: nextNode.props.contentType,
     relId: nextNode.props.relId,
     mediaPath: nextNode.props.mediaPath,
@@ -384,6 +422,12 @@ function createHostSubtree(vnode, ownerDocument, operations, context) {
     return element;
   }
 
+  if (vnode.type === "math") {
+    vnode.props.placeholder = formatMathPlaceholder(vnode.props.text || "");
+    updateMathElement(element, vnode.props);
+    return element;
+  }
+
   for (const child of vnode.children) {
     validateChildType(vnode.type, child.type);
     element.appendChild(createHostSubtree(child, ownerDocument, operations, context));
@@ -418,6 +462,9 @@ function createHostElement(vnode, ownerDocument) {
     case "footnote": return createWordElement(ownerDocument, "w:footnote");
     case "endnote": return createWordElement(ownerDocument, "w:endnote");
     case "image": return ownerDocument.createElementNS("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "w:drawing");
+    case "math": return vnode.props.display === "block"
+      ? createMathElement(ownerDocument, "m:oMathPara")
+      : createMathElement(ownerDocument, "m:oMath");
     default: throw new Error(`Unsupported vnode type "${vnode.type}" for host creation.`);
   }
 }
@@ -432,12 +479,13 @@ function updateDrawingElement(drawingElement, props) {
   const aNs = "http://schemas.openxmlformats.org/drawingml/2006/main";
   const picNs = "http://schemas.openxmlformats.org/drawingml/2006/picture";
   const rNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-
-  const inline = doc.createElementNS(wpNs, "wp:inline");
+  const layout = normalizeImageLayout(props.layout);
+  const container = layout.mode === "anchor"
+    ? createAnchorContainer(doc, wpNs, layout)
+    : doc.createElementNS(wpNs, "wp:inline");
   const extent = doc.createElementNS(wpNs, "wp:extent");
   extent.setAttribute("cx", String(props.width || "990000"));
   extent.setAttribute("cy", String(props.height || "792000"));
-  inline.appendChild(extent);
 
   const docPr = doc.createElementNS(wpNs, "wp:docPr");
   docPr.setAttribute("id", "1");
@@ -445,7 +493,6 @@ function updateDrawingElement(drawingElement, props) {
   if (props.alt) {
     docPr.setAttribute("descr", props.alt);
   }
-  inline.appendChild(docPr);
 
   const graphic = doc.createElementNS(aNs, "a:graphic");
   const graphicData = doc.createElementNS(aNs, "a:graphicData");
@@ -485,8 +532,120 @@ function updateDrawingElement(drawingElement, props) {
 
   graphicData.appendChild(pic);
   graphic.appendChild(graphicData);
-  inline.appendChild(graphic);
-  drawingElement.appendChild(inline);
+
+  if (layout.mode === "anchor") {
+    container.appendChild(doc.createElementNS(wpNs, "wp:simplePos")).setAttribute("x", "0");
+    container.lastChild.setAttribute("y", "0");
+    container.appendChild(createPositionNode(doc, wpNs, "wp:positionH", layout.positionH));
+    container.appendChild(createPositionNode(doc, wpNs, "wp:positionV", layout.positionV));
+    container.appendChild(extent);
+    const effectExtent = doc.createElementNS(wpNs, "wp:effectExtent");
+    effectExtent.setAttribute("l", "0");
+    effectExtent.setAttribute("t", "0");
+    effectExtent.setAttribute("r", "0");
+    effectExtent.setAttribute("b", "0");
+    container.appendChild(effectExtent);
+    container.appendChild(createWrapNode(doc, wpNs, layout.wrap));
+    container.appendChild(docPr);
+    container.appendChild(doc.createElementNS(wpNs, "wp:cNvGraphicFramePr"));
+    container.appendChild(graphic);
+  } else {
+    container.appendChild(extent);
+    container.appendChild(docPr);
+    container.appendChild(graphic);
+  }
+
+  drawingElement.appendChild(container);
+}
+
+function normalizeImageLayout(layout) {
+  return {
+    mode: layout && layout.mode === "anchor" ? "anchor" : "inline",
+    wrap: layout && layout.wrap ? layout.wrap : "none",
+    distances: {
+      top: layout && layout.distances && layout.distances.top ? String(layout.distances.top) : "0",
+      bottom: layout && layout.distances && layout.distances.bottom ? String(layout.distances.bottom) : "0",
+      left: layout && layout.distances && layout.distances.left ? String(layout.distances.left) : "114300",
+      right: layout && layout.distances && layout.distances.right ? String(layout.distances.right) : "114300",
+    },
+    positionH: normalizePosition(layout && layout.positionH, { relativeFrom: "margin", align: "center" }),
+    positionV: normalizePosition(layout && layout.positionV, { relativeFrom: "paragraph", offset: "0" }),
+    behindDoc: layout && layout.behindDoc != null ? layout.behindDoc : false,
+    allowOverlap: layout && layout.allowOverlap != null ? layout.allowOverlap : true,
+    layoutInCell: layout && layout.layoutInCell != null ? layout.layoutInCell : true,
+  };
+}
+
+function normalizePosition(position, fallback) {
+  return {
+    relativeFrom: position && position.relativeFrom ? position.relativeFrom : fallback.relativeFrom,
+    align: position && position.align ? position.align : (fallback.align || null),
+    offset: position && position.offset ? String(position.offset) : (fallback.offset || null),
+  };
+}
+
+function createAnchorContainer(doc, wpNs, layout) {
+  const anchor = doc.createElementNS(wpNs, "wp:anchor");
+  anchor.setAttribute("distT", layout.distances.top);
+  anchor.setAttribute("distB", layout.distances.bottom);
+  anchor.setAttribute("distL", layout.distances.left);
+  anchor.setAttribute("distR", layout.distances.right);
+  anchor.setAttribute("simplePos", "0");
+  anchor.setAttribute("relativeHeight", "251658240");
+  anchor.setAttribute("behindDoc", layout.behindDoc ? "1" : "0");
+  anchor.setAttribute("locked", "0");
+  anchor.setAttribute("layoutInCell", layout.layoutInCell ? "1" : "0");
+  anchor.setAttribute("allowOverlap", layout.allowOverlap ? "1" : "0");
+  return anchor;
+}
+
+function createPositionNode(doc, wpNs, tagName, position) {
+  const node = doc.createElementNS(wpNs, tagName);
+  node.setAttribute("relativeFrom", position.relativeFrom);
+  if (position.align) {
+    const align = doc.createElementNS(wpNs, "wp:align");
+    align.appendChild(doc.createTextNode(position.align));
+    node.appendChild(align);
+  } else {
+    const offset = doc.createElementNS(wpNs, "wp:posOffset");
+    offset.appendChild(doc.createTextNode(position.offset || "0"));
+    node.appendChild(offset);
+  }
+  return node;
+}
+
+function createWrapNode(doc, wpNs, wrap) {
+  if (wrap === "square") {
+    const node = doc.createElementNS(wpNs, "wp:wrapSquare");
+    node.setAttribute("wrapText", "bothSides");
+    return node;
+  }
+  if (wrap === "tight") {
+    const node = doc.createElementNS(wpNs, "wp:wrapTight");
+    node.setAttribute("wrapText", "bothSides");
+    const polygon = doc.createElementNS(wpNs, "wp:wrapPolygon");
+    polygon.setAttribute("edited", "0");
+    const points = [
+      ["0", "0"],
+      ["0", "21600"],
+      ["21600", "21600"],
+      ["21600", "0"],
+      ["0", "0"],
+    ];
+    for (let index = 0; index < points.length; index += 1) {
+      const [x, y] = points[index];
+      const point = doc.createElementNS(wpNs, index === 0 ? "wp:start" : "wp:lineTo");
+      point.setAttribute("x", x);
+      point.setAttribute("y", y);
+      polygon.appendChild(point);
+    }
+    node.appendChild(polygon);
+    return node;
+  }
+  if (wrap === "topAndBottom") {
+    return doc.createElementNS(wpNs, "wp:wrapTopAndBottom");
+  }
+  return doc.createElementNS(wpNs, "wp:wrapNone");
 }
 
 module.exports = {

@@ -7,7 +7,7 @@ const { ParagraphTextModel } = require("../src/core/paragraph-text-model");
 
 function parseParagraph(xml) {
   const documentNode = new DOMParser().parseFromString(
-    `<w:root xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${xml}</w:root>`,
+    `<w:root xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">${xml}</w:root>`,
     "application/xml",
   );
 
@@ -17,48 +17,68 @@ function parseParagraph(xml) {
 test("ParagraphTextModel reads a full paragraph across split runs", () => {
   const paragraph = parseParagraph(`
     <w:p>
-      <w:r><w:t>地理科学学院</w:t></w:r>
-      <w:r><w:t>25</w:t></w:r>
-      <w:r><w:t>级硕士地信团支</w:t></w:r>
-      <w:r><w:t>部</w:t></w:r>
+      <w:r><w:t>Hello </w:t></w:r>
+      <w:r><w:t>virtual </w:t></w:r>
+      <w:r><w:t>docx</w:t></w:r>
     </w:p>
   `);
 
   const model = new ParagraphTextModel(paragraph);
-  assert.equal(model.getText(), "地理科学学院25级硕士地信团支部");
+  assert.equal(model.getText(), "Hello virtual docx");
 });
 
 test("ParagraphTextModel writes replacements back to split text nodes", () => {
   const paragraph = parseParagraph(`
     <w:p>
-      <w:r><w:t>躬行实践</w:t></w:r>
-      <w:r><w:t>察民生，青春</w:t></w:r>
-      <w:r><w:t>共议家国事</w:t></w:r>
+      <w:r><w:t>alpha </w:t></w:r>
+      <w:r><w:t>beta </w:t></w:r>
+      <w:r><w:t>gamma</w:t></w:r>
     </w:p>
   `);
 
   const model = new ParagraphTextModel(paragraph);
-  const count = model.replace("实践察民生，青春共议", "调研民情，青年同议");
+  const count = model.replace("beta gamma", "delta theta");
 
   assert.equal(count, 1);
-  assert.equal(model.getText(), "躬行调研民情，青年同议家国事");
+  assert.equal(model.getText(), "alpha delta theta");
 
   const textNodes = Array.from(paragraph.getElementsByTagName("w:t")).map((node) => node.textContent);
-  assert.deepEqual(textNodes, ["躬行调研", "民情，青年同", "议家国事"]);
+  assert.deepEqual(textNodes, ["alpha ", "delta", " theta"]);
 });
 
 test("ParagraphTextModel preserves control nodes such as tabs", () => {
   const paragraph = parseParagraph(`
     <w:p>
-      <w:r><w:t>第一项</w:t></w:r>
+      <w:r><w:t>Item</w:t></w:r>
       <w:r><w:tab /></w:r>
-      <w:r><w:t>说明</w:t></w:r>
+      <w:r><w:t>Value</w:t></w:r>
     </w:p>
   `);
 
   const model = new ParagraphTextModel(paragraph);
-  model.setText("更新项\t详细说明");
+  model.setText("Field\tResult");
 
-  assert.equal(model.getText(), "更新项\t详细说明");
+  assert.equal(model.getText(), "Field\tResult");
   assert.equal(paragraph.getElementsByTagName("w:tab").length, 1);
+});
+
+test("ParagraphTextModel preserves math nodes while updating surrounding text", () => {
+  const paragraph = parseParagraph(`
+    <w:p>
+      <w:r><w:t>Before </w:t></w:r>
+      <m:oMath>
+        <m:r><m:t>x+1</m:t></m:r>
+      </m:oMath>
+      <w:r><w:t> after</w:t></w:r>
+    </w:p>
+  `);
+
+  const model = new ParagraphTextModel(paragraph);
+  assert.equal(model.getText(), "Before [[MATH:x+1]] after");
+
+  model.setText("Updated [[MATH:x+1]] done");
+
+  assert.equal(model.getText(), "Updated [[MATH:x+1]] done");
+  assert.equal(paragraph.getElementsByTagName("m:oMath").length, 1);
+  assert.equal(paragraph.getElementsByTagName("m:t")[0].textContent, "x+1");
 });

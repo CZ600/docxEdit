@@ -6,6 +6,7 @@ const {
   isElement,
   setElementText,
 } = require("../shared/xml");
+const { collectMathText, formatMathPlaceholder, isMathElement } = require("./math-model");
 const { replaceAllInText, replaceFirstInText } = require("./text-utils");
 
 function isWritableToken(token) {
@@ -48,6 +49,15 @@ function collectParagraphTokens(node, tokens) {
   }
 
   if (isElement(node, "w:pPr")) {
+    return;
+  }
+
+  if (isMathElement(node)) {
+    tokens.push({
+      kind: "math",
+      value: formatMathPlaceholder(collectMathText(node)),
+      element: node,
+    });
     return;
   }
 

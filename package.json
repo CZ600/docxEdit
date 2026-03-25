@@ -7,6 +7,7 @@
     "test": "node --test",
     "example": "node examples/basic.js",
     "example:image": "node examples/image-check.js",
+    "example:image-layout": "node examples/image-layout-check.js",
     "example:text": "node examples/text-check.js",
     "example:sample": "node examples/sample-docx-check.js",
     "example:table-style": "node examples/table-style-check.js"

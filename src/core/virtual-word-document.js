@@ -7,6 +7,7 @@ const { applyDocumentPatch } = require("./patch");
 const {
   DocumentPartController,
   ImageController,
+  MathController,
   ParagraphController,
   RunController,
   StructuredEntryController,
@@ -217,6 +218,10 @@ class VirtualWordDocument {
     return this.getDescendantControllers(this.rootVNode.id, "image");
   }
 
+  getMaths() {
+    return this.getDescendantControllers(this.rootVNode.id, "math");
+  }
+
   getFootnotes() {
     return this.getDescendantControllers(this.rootVNode.id, "footnote").filter((entry) => !entry.metadata.specialType);
   }
@@ -270,6 +275,8 @@ class VirtualWordDocument {
         return new RunController(this, nodeId);
       case "image":
         return new ImageController(this, nodeId);
+      case "math":
+        return new MathController(this, nodeId);
       case "table":
         return new TableController(this, nodeId);
       case "table-row":

@@ -4,6 +4,7 @@ const { VirtualWordDocument } = require("./core/virtual-word-document");
 const {
   DocumentPartController,
   ImageController,
+  MathController,
   ParagraphController,
   RunController,
   StructuredEntryController,
@@ -21,6 +22,7 @@ async function loadDocx(input) {
 module.exports = {
   DocumentPartController,
   ImageController,
+  MathController,
   ParagraphController,
   RunController,
   StructuredEntryController,

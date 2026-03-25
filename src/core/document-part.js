@@ -12,6 +12,7 @@ const {
 } = require("./style-model");
 const { replaceAllInText, replaceFirstInText } = require("./text-utils");
 const { createVNode } = require("./vnode");
+const { formatMathPlaceholder, isMathElement, parseMathNode } = require("./math-model");
 const { childElements, isElement } = require("../shared/xml");
 
 function getWordAttribute(element, localName) {
@@ -52,6 +53,7 @@ function getNodeType(element) {
   if (isElement(element, "w:footnote")) return "footnote";
   if (isElement(element, "w:endnote")) return "endnote";
   if (isElement(element, "w:drawing")) return "image";
+  if (isMathElement(element)) return "math";
   return element.nodeName.replace(/^w:/, "");
 }
 
@@ -140,6 +142,14 @@ class ParagraphController extends BaseController {
 
   getRun(index) {
     return this.getRuns()[index];
+  }
+
+  getMaths() {
+    return this.doc.getDescendantControllers(this.nodeId, "math");
+  }
+
+  getMath(index) {
+    return this.getMaths()[index];
   }
 }
 
@@ -276,6 +286,14 @@ class RunController extends BaseController {
   getImage(index) {
     return this.getImages()[index];
   }
+
+  getMaths() {
+    return this.doc.getDescendantControllers(this.nodeId, "math");
+  }
+
+  getMath(index) {
+    return this.getMaths()[index];
+  }
 }
 
 class ImageController extends BaseController {
@@ -295,11 +313,15 @@ class ImageController extends BaseController {
     return { width: this.vnode.props.width || null, height: this.vnode.props.height || null };
   }
 
+  getLayout() {
+    return cloneStyle(this.vnode.props.layout || {});
+  }
+
   async getData() {
     return this.doc.getImageData(this.nodeId);
   }
 
-  replace({ data, filename, contentType, width, height, alt }) {
+  replace({ data, filename, contentType, width, height, alt, layout, paragraphAlignment }) {
     this.doc.patchWithMutableTree((nextRoot) => {
       const image = findNodeById(nextRoot, this.nodeId);
       ensureExistingNode(image, this.nodeId, "image");
@@ -309,6 +331,42 @@ class ImageController extends BaseController {
       if (width !== undefined) image.props.width = width;
       if (height !== undefined) image.props.height = height;
       if (alt !== undefined) image.props.alt = alt;
+      if (layout !== undefined) image.props.layout = cloneStyle(layout || {});
+      if (paragraphAlignment !== undefined) {
+        const paragraph = findAncestorNodeByType(image, "paragraph");
+        if (paragraph) {
+          paragraph.props.style = mergeStyles(paragraph.props.style || {}, { alignment: paragraphAlignment });
+        }
+      }
+    });
+    return this;
+  }
+
+  setLayout(nextLayout) {
+    this.doc.patchWithMutableTree((nextRoot) => {
+      const image = findNodeById(nextRoot, this.nodeId);
+      ensureExistingNode(image, this.nodeId, "image");
+      image.props.layout = cloneStyle(nextLayout || {});
+    });
+    return this;
+  }
+
+  patchLayout(partialLayout) {
+    this.doc.patchWithMutableTree((nextRoot) => {
+      const image = findNodeById(nextRoot, this.nodeId);
+      ensureExistingNode(image, this.nodeId, "image");
+      image.props.layout = mergeStyles(image.props.layout || {}, partialLayout || {});
+    });
+    return this;
+  }
+
+  setParagraphAlignment(alignment) {
+    this.doc.patchWithMutableTree((nextRoot) => {
+      const image = findNodeById(nextRoot, this.nodeId);
+      ensureExistingNode(image, this.nodeId, "image");
+      const paragraph = findAncestorNodeByType(image, "paragraph");
+      if (!paragraph) return;
+      paragraph.props.style = mergeStyles(paragraph.props.style || {}, { alignment });
     });
     return this;
   }
@@ -316,6 +374,75 @@ class ImageController extends BaseController {
   remove() {
     this.doc.patchWithMutableTree((nextRoot) => {
       removeNodeById(nextRoot, this.nodeId);
+    });
+    return this;
+  }
+}
+
+class MathController extends BaseController {
+  getText() {
+    return this.vnode.props.text || "";
+  }
+
+  setText(nextText) {
+    this.doc.patchWithMutableTree((nextRoot) => {
+      const math = findNodeById(nextRoot, this.nodeId);
+      ensureExistingNode(math, this.nodeId, "math");
+      math.props.text = String(nextText || "");
+      math.props.placeholder = formatMathPlaceholder(math.props.text);
+    });
+    return this;
+  }
+
+  getDisplay() {
+    return this.vnode.props.display || "inline";
+  }
+
+  setDisplay(nextDisplay) {
+    this.doc.patchWithMutableTree((nextRoot) => {
+      const math = findNodeById(nextRoot, this.nodeId);
+      ensureExistingNode(math, this.nodeId, "math");
+      math.props.display = nextDisplay === "block" ? "block" : "inline";
+    });
+    return this;
+  }
+
+  getStyle() {
+    return cloneStyle(this.vnode.props.style || {});
+  }
+
+  setStyle(nextStyle) {
+    this.doc.patchWithMutableTree((nextRoot) => {
+      const math = findNodeById(nextRoot, this.nodeId);
+      ensureExistingNode(math, this.nodeId, "math");
+      math.props.style = cloneStyle(nextStyle || {});
+    });
+    return this;
+  }
+
+  patchStyle(partialStyle) {
+    this.doc.patchWithMutableTree((nextRoot) => {
+      const math = findNodeById(nextRoot, this.nodeId);
+      ensureExistingNode(math, this.nodeId, "math");
+      math.props.style = mergeStyles(math.props.style || {}, partialStyle || {});
+    });
+    return this;
+  }
+
+  replace({ text, display, style }) {
+    this.doc.patchWithMutableTree((nextRoot) => {
+      const math = findNodeById(nextRoot, this.nodeId);
+      ensureExistingNode(math, this.nodeId, "math");
+      if (text !== undefined) {
+        math.props.text = String(text || "");
+        math.props.placeholder = formatMathPlaceholder(math.props.text);
+      }
+      if (display !== undefined) {
+        math.props.display = display === "block" ? "block" : "inline";
+      }
+      if (style !== undefined) {
+        math.props.style = cloneStyle(style || {});
+      }
     });
     return this;
   }
@@ -517,6 +644,24 @@ function parseNode(element, context, ancestors = []) {
     }
   }
 
+  if (isMathElement(element)) {
+    const mathProps = parseMathNode(element);
+    const mathVNode = createVNode({
+      id: element.__vnodeId || null,
+      type: "math",
+      props: {
+        text: mathProps.text,
+        display: mathProps.display,
+        style: mathProps.style,
+        placeholder: formatMathPlaceholder(mathProps.text),
+      },
+      children: [],
+      source: element,
+    });
+    registerMetadata(context, mathVNode, ancestors);
+    return mathVNode;
+  }
+
   if (isElement(element, "w:p")) {
     const textModel = new ParagraphTextModel(element);
     const paragraphVNode = createVNode({
@@ -592,6 +737,9 @@ function parseImageNode(element, context) {
   const extent = element.getElementsByTagName("wp:extent")[0] || null;
   const docPr = element.getElementsByTagName("wp:docPr")[0] || null;
   const cNvPr = element.getElementsByTagName("pic:cNvPr")[0] || null;
+  const inline = element.getElementsByTagName("wp:inline")[0] || null;
+  const anchor = element.getElementsByTagName("wp:anchor")[0] || null;
+  const container = anchor || inline || null;
   const name = (docPr && docPr.getAttribute("name")) || (cNvPr && cNvPr.getAttribute("name")) || null;
   const alt = (docPr && (docPr.getAttribute("descr") || docPr.getAttribute("title"))) ||
     (cNvPr && (cNvPr.getAttribute("descr") || cNvPr.getAttribute("title"))) ||
@@ -609,10 +757,95 @@ function parseImageNode(element, context) {
       width: extent ? extent.getAttribute("cx") : null,
       height: extent ? extent.getAttribute("cy") : null,
       alt,
+      layout: parseImageLayout(container),
     },
     children: [],
     source: element,
   });
+}
+
+function parseImageLayout(container) {
+  if (!container) {
+    return { mode: "inline" };
+  }
+
+  const layout = {
+    mode: isElement(container, "wp:anchor") ? "anchor" : "inline",
+  };
+
+  if (layout.mode === "anchor") {
+    layout.wrap = parseWrap(container);
+    layout.distances = compactObject({
+      top: container.getAttribute("distT") || null,
+      bottom: container.getAttribute("distB") || null,
+      left: container.getAttribute("distL") || null,
+      right: container.getAttribute("distR") || null,
+    });
+    layout.behindDoc = parseBooleanAttribute(container.getAttribute("behindDoc"));
+    layout.allowOverlap = parseBooleanAttribute(container.getAttribute("allowOverlap"));
+    layout.layoutInCell = parseBooleanAttribute(container.getAttribute("layoutInCell"));
+
+    const positionH = container.getElementsByTagName("wp:positionH")[0] || null;
+    const positionV = container.getElementsByTagName("wp:positionV")[0] || null;
+    if (positionH) {
+      layout.positionH = parsePosition(positionH);
+    }
+    if (positionV) {
+      layout.positionV = parsePosition(positionV);
+    }
+  }
+
+  return compactObject(layout);
+}
+
+function parseWrap(container) {
+  if (container.getElementsByTagName("wp:wrapNone")[0]) return "none";
+  if (container.getElementsByTagName("wp:wrapSquare")[0]) return "square";
+  if (container.getElementsByTagName("wp:wrapTight")[0]) return "tight";
+  if (container.getElementsByTagName("wp:wrapTopAndBottom")[0]) return "topAndBottom";
+  return "none";
+}
+
+function parsePosition(positionElement) {
+  const align = positionElement.getElementsByTagName("wp:align")[0];
+  const posOffset = positionElement.getElementsByTagName("wp:posOffset")[0];
+  return compactObject({
+    relativeFrom: positionElement.getAttribute("relativeFrom") || null,
+    align: align ? align.textContent : null,
+    offset: posOffset ? posOffset.textContent : null,
+  });
+}
+
+function parseBooleanAttribute(value) {
+  if (value == null || value === "") return null;
+  return !["0", "false", "off"].includes(String(value).toLowerCase());
+}
+
+function compactObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+
+  const result = {};
+  for (const [key, innerValue] of Object.entries(value)) {
+    if (innerValue == null) continue;
+    if (typeof innerValue === "object" && !Array.isArray(innerValue)) {
+      const nested = compactObject(innerValue);
+      if (nested && Object.keys(nested).length > 0) result[key] = nested;
+      continue;
+    }
+    result[key] = innerValue;
+  }
+  return result;
+}
+
+function findAncestorNodeByType(node, type) {
+  let current = node ? node.parent : null;
+  while (current) {
+    if (current.type === type) return current;
+    current = current.parent;
+  }
+  return null;
 }
 
 function registerMetadata(context, vnode, ancestors) {
@@ -714,6 +947,10 @@ function collectInlineText(node) {
       text += child.props.text || "";
       continue;
     }
+    if (child.type === "math") {
+      text += child.props.placeholder || formatMathPlaceholder(child.props.text || "");
+      continue;
+    }
     text += collectInlineText(child);
   }
   return text;
@@ -722,6 +959,7 @@ function collectInlineText(node) {
 module.exports = {
   DocumentPartController,
   ImageController,
+  MathController,
   ParagraphController,
   RunController,
   StructuredEntryController,
