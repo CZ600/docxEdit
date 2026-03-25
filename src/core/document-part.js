@@ -2,7 +2,14 @@
 
 const { DOMParser } = require("@xmldom/xmldom");
 const { ParagraphTextModel } = require("./paragraph-text-model");
-const { cloneStyle, parseParagraphStyle, parseRunStyle } = require("./style-model");
+const {
+  cloneStyle,
+  parseParagraphStyle,
+  parseRunStyle,
+  parseTableCellStyle,
+  parseTableRowStyle,
+  parseTableStyle,
+} = require("./style-model");
 const { replaceAllInText, replaceFirstInText } = require("./text-utils");
 const { createVNode } = require("./vnode");
 const { childElements, isElement } = require("../shared/xml");
@@ -167,6 +174,32 @@ class TableCellController extends BaseController {
     });
     return this;
   }
+
+  getStyle() {
+    return cloneStyle(this.vnode.props.style || {});
+  }
+
+  setStyle(nextStyle) {
+    this.doc.patchWithMutableTree((nextRoot) => {
+      const cell = findNodeById(nextRoot, this.nodeId);
+      ensureExistingNode(cell, this.nodeId, "table-cell");
+      cell.props.style = cloneStyle(nextStyle || {});
+    });
+    return this;
+  }
+
+  patchStyle(partialStyle) {
+    this.doc.patchWithMutableTree((nextRoot) => {
+      const cell = findNodeById(nextRoot, this.nodeId);
+      ensureExistingNode(cell, this.nodeId, "table-cell");
+      cell.props.style = mergeStyles(cell.props.style || {}, partialStyle || {});
+    });
+    return this;
+  }
+
+  copyStyleFrom(otherCell) {
+    return this.setStyle(otherCell.getStyle());
+  }
 }
 
 class TableRowController extends BaseController {
@@ -176,6 +209,32 @@ class TableRowController extends BaseController {
 
   getCell(index) {
     return this.getCells()[index];
+  }
+
+  getStyle() {
+    return cloneStyle(this.vnode.props.style || {});
+  }
+
+  setStyle(nextStyle) {
+    this.doc.patchWithMutableTree((nextRoot) => {
+      const row = findNodeById(nextRoot, this.nodeId);
+      ensureExistingNode(row, this.nodeId, "table-row");
+      row.props.style = cloneStyle(nextStyle || {});
+    });
+    return this;
+  }
+
+  patchStyle(partialStyle) {
+    this.doc.patchWithMutableTree((nextRoot) => {
+      const row = findNodeById(nextRoot, this.nodeId);
+      ensureExistingNode(row, this.nodeId, "table-row");
+      row.props.style = mergeStyles(row.props.style || {}, partialStyle || {});
+    });
+    return this;
+  }
+
+  copyStyleFrom(otherRow) {
+    return this.setStyle(otherRow.getStyle());
   }
 }
 
@@ -263,6 +322,32 @@ class ImageController extends BaseController {
 }
 
 class TableController extends BaseController {
+  getStyle() {
+    return cloneStyle(this.vnode.props.style || {});
+  }
+
+  setStyle(nextStyle) {
+    this.doc.patchWithMutableTree((nextRoot) => {
+      const table = findNodeById(nextRoot, this.nodeId);
+      ensureExistingNode(table, this.nodeId, "table");
+      table.props.style = cloneStyle(nextStyle || {});
+    });
+    return this;
+  }
+
+  patchStyle(partialStyle) {
+    this.doc.patchWithMutableTree((nextRoot) => {
+      const table = findNodeById(nextRoot, this.nodeId);
+      ensureExistingNode(table, this.nodeId, "table");
+      table.props.style = mergeStyles(table.props.style || {}, partialStyle || {});
+    });
+    return this;
+  }
+
+  copyStyleFrom(otherTable) {
+    return this.setStyle(otherTable.getStyle());
+  }
+
   getRows() {
     return this.doc.getDirectChildControllers(this.nodeId, "table-row");
   }
@@ -454,6 +539,9 @@ function parseNode(element, context, ancestors = []) {
     props: {},
     children: childElements(element)
       .filter((child) => !(isElement(element, "w:r") && isElement(child, "w:rPr")))
+      .filter((child) => !(isElement(element, "w:tbl") && isElement(child, "w:tblPr")))
+      .filter((child) => !(isElement(element, "w:tr") && isElement(child, "w:trPr")))
+      .filter((child) => !(isElement(element, "w:tc") && isElement(child, "w:tcPr")))
       .map((child) => parseNode(child, context, nextAncestors))
       .filter(Boolean),
     source: element,
@@ -461,6 +549,15 @@ function parseNode(element, context, ancestors = []) {
 
   if (isElement(element, "w:r")) {
     vnode.props.style = parseRunStyle(element);
+  }
+  if (isElement(element, "w:tbl")) {
+    vnode.props.style = parseTableStyle(element);
+  }
+  if (isElement(element, "w:tr")) {
+    vnode.props.style = parseTableRowStyle(element);
+  }
+  if (isElement(element, "w:tc")) {
+    vnode.props.style = parseTableCellStyle(element);
   }
   if (isElement(element, "w:t")) {
     vnode.props.text = element.textContent || "";

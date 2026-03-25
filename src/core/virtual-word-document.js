@@ -30,6 +30,7 @@ const { cloneVNode, createVNode, visitVNode } = require("./vnode");
 const { replaceAllInText } = require("./text-utils");
 
 const MAIN_DOCUMENT_PATH = "word/document.xml";
+const CONTENT_TYPES_PATH = "[Content_Types].xml";
 
 class VirtualWordDocument {
   constructor({ zip, partsData, relationshipsByPartPath }) {
@@ -370,6 +371,8 @@ class VirtualWordDocument {
       this.zip.file(relationships.relsPath, xml);
     }
 
+    await syncContentTypesXml(this.zip);
+
     return this.zip.generateAsync({ type: "nodebuffer" });
   }
 
@@ -443,7 +446,46 @@ async function loadSupportedPartDescriptors(zip) {
   return descriptors;
 }
 
+async function syncContentTypesXml(zip) {
+  const file = zip.file(CONTENT_TYPES_PATH);
+  if (!file) return;
+
+  const xmlDocument = parseXmlString(await file.async("string"));
+  const documentElement = xmlDocument.documentElement;
+  const files = Object.keys(zip.files).filter((name) => !zip.files[name].dir);
+  const defaults = new Map();
+
+  for (const node of Array.from(documentElement.getElementsByTagName("Default"))) {
+    defaults.set((node.getAttribute("Extension") || "").toLowerCase(), node);
+  }
+
+  for (const name of files) {
+    const extensionMatch = /\.([^.]+)$/.exec(name);
+    if (!extensionMatch) continue;
+    const extension = extensionMatch[1].toLowerCase();
+    const contentType = defaultContentTypeForExtension(extension);
+    if (!contentType || defaults.has(extension)) continue;
+
+    const node = xmlDocument.createElementNS(documentElement.namespaceURI, "Default");
+    node.setAttribute("Extension", extension);
+    node.setAttribute("ContentType", contentType);
+    documentElement.appendChild(node);
+    defaults.set(extension, node);
+  }
+
+  const xml = new XMLSerializer().serializeToString(xmlDocument);
+  zip.file(CONTENT_TYPES_PATH, xml);
+}
+
+function defaultContentTypeForExtension(extension) {
+  if (extension === "png") return "image/png";
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "gif") return "image/gif";
+  return null;
+}
+
 module.exports = {
+  CONTENT_TYPES_PATH,
   MAIN_DOCUMENT_PATH,
   VirtualWordDocument,
 };

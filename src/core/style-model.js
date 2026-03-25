@@ -2,6 +2,9 @@
 
 const { childElements, createWordElement, isElement } = require("../shared/xml");
 
+const BORDER_SIDES = ["top", "left", "bottom", "right", "insideH", "insideV"];
+const CELL_MARGIN_SIDES = ["top", "left", "bottom", "right"];
+
 function parseParagraphStyle(paragraphElement) {
   const pPr = getDirectChild(paragraphElement, "w:pPr");
   if (!pPr) {
@@ -96,6 +99,120 @@ function parseRunStyle(runElement) {
   return compactObject(style);
 }
 
+function parseTableStyle(tableElement) {
+  const tblPr = getDirectChild(tableElement, "w:tblPr");
+  if (!tblPr) {
+    return {};
+  }
+
+  const style = {};
+  const tblStyle = getDirectChild(tblPr, "w:tblStyle");
+  const tblW = getDirectChild(tblPr, "w:tblW");
+  const tblLayout = getDirectChild(tblPr, "w:tblLayout");
+  const jc = getDirectChild(tblPr, "w:jc");
+  const borders = getDirectChild(tblPr, "w:tblBorders");
+
+  if (tblStyle) {
+    style.styleId = getWordAttribute(tblStyle, "val");
+  }
+
+  if (tblW) {
+    style.width = compactObject({
+      w: getWordAttribute(tblW, "w"),
+      type: getWordAttribute(tblW, "type"),
+    });
+  }
+
+  if (tblLayout) {
+    style.layout = getWordAttribute(tblLayout, "type");
+  }
+
+  if (jc) {
+    style.alignment = getWordAttribute(jc, "val");
+  }
+
+  if (borders) {
+    style.borders = parseBorders(borders, BORDER_SIDES);
+  }
+
+  return compactObject(style);
+}
+
+function parseTableRowStyle(rowElement) {
+  const trPr = getDirectChild(rowElement, "w:trPr");
+  if (!trPr) {
+    return {};
+  }
+
+  const style = {};
+  const trHeight = getDirectChild(trPr, "w:trHeight");
+
+  if (trHeight) {
+    style.height = compactObject({
+      val: getWordAttribute(trHeight, "val"),
+      rule: getWordAttribute(trHeight, "hRule"),
+    });
+  }
+
+  assignOnOffStyle(style, "header", getDirectChild(trPr, "w:tblHeader"));
+  assignOnOffStyle(style, "cantSplit", getDirectChild(trPr, "w:cantSplit"));
+
+  return compactObject(style);
+}
+
+function parseTableCellStyle(cellElement) {
+  const tcPr = getDirectChild(cellElement, "w:tcPr");
+  if (!tcPr) {
+    return {};
+  }
+
+  const style = {};
+  const tcW = getDirectChild(tcPr, "w:tcW");
+  const shading = getDirectChild(tcPr, "w:shd");
+  const verticalAlign = getDirectChild(tcPr, "w:vAlign");
+  const gridSpan = getDirectChild(tcPr, "w:gridSpan");
+  const vMerge = getDirectChild(tcPr, "w:vMerge");
+  const tcBorders = getDirectChild(tcPr, "w:tcBorders");
+  const tcMar = getDirectChild(tcPr, "w:tcMar");
+
+  if (tcW) {
+    style.width = compactObject({
+      w: getWordAttribute(tcW, "w"),
+      type: getWordAttribute(tcW, "type"),
+    });
+  }
+
+  if (shading) {
+    style.shading = compactObject({
+      val: getWordAttribute(shading, "val"),
+      fill: getWordAttribute(shading, "fill"),
+      color: getWordAttribute(shading, "color"),
+    });
+  }
+
+  if (verticalAlign) {
+    style.verticalAlign = getWordAttribute(verticalAlign, "val");
+  }
+
+  if (gridSpan) {
+    style.gridSpan = getWordAttribute(gridSpan, "val");
+  }
+
+  if (vMerge) {
+    style.vMerge = getWordAttribute(vMerge, "val") || "continue";
+  }
+
+  if (tcBorders) {
+    style.borders = parseBorders(tcBorders, BORDER_SIDES.filter((side) => !side.startsWith("inside")));
+  }
+
+  if (tcMar) {
+    style.margins = parseMargins(tcMar);
+  }
+
+  return compactObject(style);
+}
+
 function applyParagraphStyle(paragraphElement, style) {
   const normalized = compactObject(cloneStyle(style || {}));
   const pPr = ensurePropertyContainer(paragraphElement, "w:pPr", normalized);
@@ -136,6 +253,63 @@ function applyRunStyle(runElement, style) {
   ];
 
   cleanupEmptyPropertyContainer(runElement, rPr);
+  return changes.some(Boolean);
+}
+
+function applyTableStyle(tableElement, style) {
+  const normalized = compactObject(cloneStyle(style || {}));
+  const tblPr = ensurePropertyContainer(tableElement, "w:tblPr", normalized);
+  if (!tblPr) {
+    return false;
+  }
+
+  const changes = [
+    syncValueChild(tblPr, "w:tblStyle", normalized.styleId),
+    syncWidthChild(tblPr, "w:tblW", normalized.width),
+    syncAttributeChild(tblPr, "w:tblLayout", normalized.layout == null ? null : { type: normalized.layout }, ["type"]),
+    syncValueChild(tblPr, "w:jc", normalized.alignment),
+    syncBordersChild(tblPr, "w:tblBorders", normalized.borders, BORDER_SIDES),
+  ];
+
+  cleanupEmptyPropertyContainer(tableElement, tblPr);
+  return changes.some(Boolean);
+}
+
+function applyTableRowStyle(rowElement, style) {
+  const normalized = compactObject(cloneStyle(style || {}));
+  const trPr = ensurePropertyContainer(rowElement, "w:trPr", normalized);
+  if (!trPr) {
+    return false;
+  }
+
+  const changes = [
+    syncAttributeChild(trPr, "w:trHeight", normalized.height, ["val", "rule"], { rule: "hRule" }),
+    syncOnOffChild(trPr, "w:tblHeader", normalized.header),
+    syncOnOffChild(trPr, "w:cantSplit", normalized.cantSplit),
+  ];
+
+  cleanupEmptyPropertyContainer(rowElement, trPr);
+  return changes.some(Boolean);
+}
+
+function applyTableCellStyle(cellElement, style) {
+  const normalized = compactObject(cloneStyle(style || {}));
+  const tcPr = ensurePropertyContainer(cellElement, "w:tcPr", normalized);
+  if (!tcPr) {
+    return false;
+  }
+
+  const changes = [
+    syncWidthChild(tcPr, "w:tcW", normalized.width),
+    syncAttributeChild(tcPr, "w:shd", normalized.shading, ["val", "fill", "color"]),
+    syncValueChild(tcPr, "w:vAlign", normalized.verticalAlign),
+    syncValueChild(tcPr, "w:gridSpan", normalized.gridSpan),
+    syncValueChild(tcPr, "w:vMerge", normalized.vMerge),
+    syncBordersChild(tcPr, "w:tcBorders", normalized.borders, BORDER_SIDES.filter((side) => !side.startsWith("inside"))),
+    syncMarginsChild(tcPr, "w:tcMar", normalized.margins),
+  ];
+
+  cleanupEmptyPropertyContainer(cellElement, tcPr);
   return changes.some(Boolean);
 }
 
@@ -240,7 +414,7 @@ function syncOnOffChild(container, childName, value) {
   return setWordAttribute(child, "val", nextValue);
 }
 
-function syncAttributeChild(container, childName, value, attributeNames) {
+function syncAttributeChild(container, childName, value, attributeNames, aliases = null) {
   if (!value || Object.keys(value).length === 0) {
     return removeDirectChild(container, childName);
   }
@@ -250,20 +424,93 @@ function syncAttributeChild(container, childName, value, attributeNames) {
 
   for (const attributeName of attributeNames) {
     const nextValue = value[attributeName] ?? null;
+    const xmlAttributeName = aliases && aliases[attributeName] ? aliases[attributeName] : attributeName;
     if (nextValue == null) {
-      if (child.hasAttribute(`w:${attributeName}`) || child.hasAttribute(attributeName)) {
-        child.removeAttribute(`w:${attributeName}`);
-        child.removeAttribute(attributeName);
+      if (child.hasAttribute(`w:${xmlAttributeName}`) || child.hasAttribute(xmlAttributeName)) {
+        child.removeAttribute(`w:${xmlAttributeName}`);
+        child.removeAttribute(xmlAttributeName);
         changed = true;
       }
       continue;
     }
 
-    changed = setWordAttribute(child, attributeName, String(nextValue)) || changed;
+    changed = setWordAttribute(child, xmlAttributeName, String(nextValue)) || changed;
   }
 
   if (Array.from(child.attributes).length === 0) {
     container.removeChild(child);
+    return true;
+  }
+
+  return changed;
+}
+
+function syncWidthChild(container, childName, value) {
+  return syncAttributeChild(container, childName, value, ["w", "type"]);
+}
+
+function parseBorders(container, sides) {
+  const result = {};
+  for (const side of sides) {
+    const border = getDirectChild(container, `w:${side}`);
+    if (!border) continue;
+    result[side] = compactObject({
+      val: getWordAttribute(border, "val"),
+      sz: getWordAttribute(border, "sz"),
+      color: getWordAttribute(border, "color"),
+      space: getWordAttribute(border, "space"),
+    });
+  }
+  return compactObject(result);
+}
+
+function syncBordersChild(container, childName, borders, sides) {
+  if (!borders || Object.keys(borders).length === 0) {
+    return removeDirectChild(container, childName);
+  }
+
+  const borderContainer = getOrCreateDirectChild(container, childName);
+  let changed = false;
+
+  for (const side of sides) {
+    changed = syncAttributeChild(borderContainer, `w:${side}`, borders[side] || null, ["val", "sz", "color", "space"]) || changed;
+  }
+
+  if (childElements(borderContainer).length === 0) {
+    container.removeChild(borderContainer);
+    return true;
+  }
+
+  return changed;
+}
+
+function parseMargins(container) {
+  const result = {};
+  for (const side of CELL_MARGIN_SIDES) {
+    const margin = getDirectChild(container, `w:${side}`);
+    if (!margin) continue;
+    result[side] = compactObject({
+      w: getWordAttribute(margin, "w"),
+      type: getWordAttribute(margin, "type"),
+    });
+  }
+  return compactObject(result);
+}
+
+function syncMarginsChild(container, childName, margins) {
+  if (!margins || Object.keys(margins).length === 0) {
+    return removeDirectChild(container, childName);
+  }
+
+  const marginContainer = getOrCreateDirectChild(container, childName);
+  let changed = false;
+
+  for (const side of CELL_MARGIN_SIDES) {
+    changed = syncWidthChild(marginContainer, `w:${side}`, margins[side] || null) || changed;
+  }
+
+  if (childElements(marginContainer).length === 0) {
+    container.removeChild(marginContainer);
     return true;
   }
 
@@ -315,8 +562,14 @@ function stylesEqual(left, right) {
 module.exports = {
   applyParagraphStyle,
   applyRunStyle,
+  applyTableCellStyle,
+  applyTableRowStyle,
+  applyTableStyle,
   cloneStyle,
   parseParagraphStyle,
   parseRunStyle,
+  parseTableCellStyle,
+  parseTableRowStyle,
+  parseTableStyle,
   stylesEqual,
 };

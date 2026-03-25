@@ -1,9 +1,16 @@
 "use strict";
 
 const { ParagraphTextModel } = require("./paragraph-text-model");
-const { applyParagraphStyle, applyRunStyle, stylesEqual } = require("./style-model");
+const {
+  applyParagraphStyle,
+  applyRunStyle,
+  applyTableCellStyle,
+  applyTableRowStyle,
+  applyTableStyle,
+  stylesEqual,
+} = require("./style-model");
 const { assignVNodeSource, createVNode } = require("./vnode");
-const { childElements, createWordElement, setElementText } = require("../shared/xml");
+const { childElements, createWordElement, isElement, setElementText } = require("../shared/xml");
 
 const PART_TYPES = new Set(["body", "header", "footer", "footnotes", "endnotes", "comments"]);
 const SPECIAL_ENTRY_TYPES = new Set(["comment", "footnote", "endnote"]);
@@ -107,6 +114,36 @@ function syncNodeProps(currentNode, nextNode, hostElement, operations, context) 
     return false;
   }
 
+  if (nextNode.type === "table") {
+    if (!stylesEqual(currentNode.props.style, nextNode.props.style)) {
+      changed = applyTableStyle(hostElement, nextNode.props.style) || changed;
+    }
+    if (changed) {
+      operations.push({ type: "PROPS/TEXT_UPDATE", nodeId: currentNode.id, nodeType: currentNode.type });
+    }
+    return false;
+  }
+
+  if (nextNode.type === "table-row") {
+    if (!stylesEqual(currentNode.props.style, nextNode.props.style)) {
+      changed = applyTableRowStyle(hostElement, nextNode.props.style) || changed;
+    }
+    if (changed) {
+      operations.push({ type: "PROPS/TEXT_UPDATE", nodeId: currentNode.id, nodeType: currentNode.type });
+    }
+    return false;
+  }
+
+  if (nextNode.type === "table-cell") {
+    if (!stylesEqual(currentNode.props.style, nextNode.props.style)) {
+      changed = applyTableCellStyle(hostElement, nextNode.props.style) || changed;
+    }
+    if (changed) {
+      operations.push({ type: "PROPS/TEXT_UPDATE", nodeId: currentNode.id, nodeType: currentNode.type });
+    }
+    return false;
+  }
+
   if (nextNode.type === "text") {
     const nextText = nextNode.props.text || "";
     if ((currentNode.props.text || "") !== nextText) {
@@ -193,6 +230,7 @@ function patchChildren(currentParent, nextParent, hostElement, operations, conte
   const matchedCurrentIds = new Set();
   const realizedChildren = [];
   let sequentialCursor = 0;
+  let needsReorder = false;
 
   for (const nextChild of nextChildren) {
     const matchedCurrent = findMatchingChild(currentChildren, nextChild, matchedCurrentIds, sequentialCursor);
@@ -212,6 +250,7 @@ function patchChildren(currentParent, nextParent, hostElement, operations, conte
 
       if (matchedCurrent.index !== realizedChildren.length) {
         operations.push({ type: "MOVE", nodeId: matchedCurrent.node.id, nodeType: matchedCurrent.node.type });
+        needsReorder = true;
       }
 
       patchNode(matchedCurrent.node, nextChild, matchedCurrent.node.source, operations, context);
@@ -221,9 +260,10 @@ function patchChildren(currentParent, nextParent, hostElement, operations, conte
 
     validateChildType(nextParent.type, nextChild.type);
     const inserted = createHostSubtree(nextChild, hostElement.ownerDocument, operations, context);
-    hostElement.appendChild(inserted);
+    hostElement.insertBefore(inserted, getTrailingAnchorNode(hostElement));
     operations.push({ type: "INSERT", nodeId: nextChild.id, nodeType: nextChild.type });
     realizedChildren.push(nextChild);
+    needsReorder = true;
   }
 
   for (const currentChild of currentChildren) {
@@ -233,10 +273,13 @@ function patchChildren(currentParent, nextParent, hostElement, operations, conte
         hostElement.removeChild(currentChild.source);
       }
       operations.push({ type: "REMOVE", nodeId: currentChild.id, nodeType: currentChild.type });
+      needsReorder = true;
     }
   }
 
-  reorderChildren(hostElement, realizedChildren);
+  if (needsReorder) {
+    reorderChildren(hostElement, realizedChildren);
+  }
 }
 
 function cleanupRemovedNode(node, context) {
@@ -274,13 +317,23 @@ function findMatchingChild(currentChildren, nextChild, matchedCurrentIds, sequen
 }
 
 function reorderChildren(hostElement, nextChildren) {
-  let referenceNode = null;
-  for (let index = nextChildren.length - 1; index >= 0; index -= 1) {
-    const child = nextChildren[index];
-    if (!child.source || child.source.parentNode !== hostElement) continue;
-    hostElement.insertBefore(child.source, referenceNode);
-    referenceNode = child.source;
+  const anchorNode = getTrailingAnchorNode(hostElement);
+  const realizedChildren = nextChildren.filter((child) => child.source && child.source.parentNode === hostElement);
+
+  for (let index = 0; index < realizedChildren.length; index += 1) {
+    const child = realizedChildren[index];
+    const currentElements = childElements(hostElement).filter((element) => element !== anchorNode);
+    const currentAtIndex = currentElements[index] || null;
+    if (currentAtIndex === child.source) continue;
+    hostElement.insertBefore(child.source, currentAtIndex || anchorNode);
   }
+}
+
+function getTrailingAnchorNode(hostElement) {
+  if (isElement(hostElement, "w:body")) {
+    return childElements(hostElement).find((child) => isElement(child, "w:sectPr")) || null;
+  }
+  return null;
 }
 
 function createHostSubtree(vnode, ownerDocument, operations, context) {
@@ -311,6 +364,18 @@ function createHostSubtree(vnode, ownerDocument, operations, context) {
 
   if (vnode.type === "run") {
     applyRunStyle(element, vnode.props.style);
+  }
+
+  if (vnode.type === "table") {
+    applyTableStyle(element, vnode.props.style);
+  }
+
+  if (vnode.type === "table-row") {
+    applyTableRowStyle(element, vnode.props.style);
+  }
+
+  if (vnode.type === "table-cell") {
+    applyTableCellStyle(element, vnode.props.style);
   }
 
   if (vnode.type === "image") {
