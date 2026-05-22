@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E '\\\\.\\(docx|js|json\\)$')",
+      "Bash(node -e ' *)",
+      "Bash(node -e \"const {loadDocx} = require\\('./src'\\); console.log\\('load OK'\\)\")",
+      "Bash(node --test test/style-profile.test.js)",
+      "Bash(node test/cross-file-format-clone.js)"
+    ]
+  }
+}

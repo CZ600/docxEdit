@@ -152,12 +152,24 @@ document
   fontSize: "28",
   fontFamily: {
     ascii: "Calibri",
+    asciiTheme: "minorHAnsi",
     hAnsi: "Calibri",
+    hAnsiTheme: "minorHAnsi",
     eastAsia: "宋体",
+    eastAsiaTheme: "minorEastAsia",
     cs: "Arial",
+    cstheme: "minorBidi",
   },
 }
 ```
+
+### 主题字体属性
+
+`fontFamily` 已支持捕获和回写主题字体引用：
+
+- `asciiTheme` / `hAnsiTheme` / `eastAsiaTheme` / `cstheme`
+
+这些属性在 `word/styles.xml` 和 `document.xml` 中均可正确解析和同步。
 
 ## 导出 API
 
@@ -348,7 +360,127 @@ const runB = paragraphB.getRun(0);
 runB.copyStyleFrom(runA);
 ```
 
-### `TableController`
+## 样式档案（Style Profile）
+
+样式档案可以从文档中提取所有命名样式定义（来自 `word/styles.xml`），输出为 JSON，也可以用同样的 JSON 格式回写到文档中修改样式定义。
+
+### 提取样式档案
+
+```js
+const profile = doc.getStyleProfile();
+
+console.log(profile.defaults);
+// { paragraphStyle: { spacing: { after: "160", line: "278", lineRule: "auto" } }, runStyle: { fontSize: "22" } }
+
+console.log(profile.styles["1"]);
+// { name: "heading 1", type: "paragraph", basedOn: "a", paragraphStyle: {...}, runStyle: { fontSize: "48", color: "2F5496" } }
+```
+
+### JSON 格式
+
+```json
+{
+  "defaults": {
+    "paragraphStyle": { "spacing": { "after": "160", "line": "278", "lineRule": "auto" } },
+    "runStyle": { "fontSize": "22", "fontFamily": { "asciiTheme": "minorHAnsi" } }
+  },
+  "styles": {
+    "a": {
+      "name": "Normal",
+      "type": "paragraph",
+      "basedOn": null,
+      "paragraphStyle": {},
+      "runStyle": {}
+    },
+    "1": {
+      "name": "heading 1",
+      "type": "paragraph",
+      "basedOn": "a",
+      "paragraphStyle": { "keepNext": true, "spacing": { "before": "480", "after": "80" } },
+      "runStyle": { "fontSize": "48", "color": "2F5496" }
+    }
+  }
+}
+```
+
+### 应用样式档案
+
+```js
+// 从文档 A 提取
+const profileA = docA.getStyleProfile();
+
+// 应用到文档 B
+docB.applyStyleProfile(profileA);
+await docB.saveAs("output.docx");
+```
+
+也可以只修改部分样式：
+
+```js
+doc.applyStyleProfile({
+  styles: {
+    "1": {
+      name: "heading 1",
+      type: "paragraph",
+      basedOn: "a",
+      runStyle: { fontSize: "56", color: "FF0000" },
+    },
+  },
+});
+```
+
+### 跨文档格式迁移
+
+不同文档的 `styleId` 可能不同。例如文档 A 的 heading 1 是 `"1"`，文档 B 的 heading 1 是 `"2"`。此时需要按样式名称匹配，而非直接按 styleId 应用：
+
+```js
+const srcProfile = docA.getStyleProfile();
+const dstProfile = docB.getStyleProfile();
+
+const mappedProfile = { defaults: srcProfile.defaults, styles: {} };
+
+for (const [srcId, srcStyle] of Object.entries(srcProfile.styles)) {
+  // 在目标文档中找同名样式
+  for (const [dstId, dstStyle] of Object.entries(dstProfile.styles)) {
+    if (dstStyle.name === srcStyle.name && dstStyle.type === srcStyle.type) {
+      mappedProfile.styles[dstId] = {
+        name: srcStyle.name,
+        type: srcStyle.type,
+        basedOn: dstStyle.basedOn,   // 保留目标文档的继承关系
+        paragraphStyle: srcStyle.paragraphStyle,
+        runStyle: srcStyle.runStyle,
+      };
+      break;
+    }
+  }
+}
+
+docB.applyStyleProfile(mappedProfile);
+await docB.saveAs("output.docx");
+```
+
+关键点：
+
+- `basedOn` 使用目标文档的值，保留目标文档自身的继承链结构
+- `paragraphStyle` 和 `runStyle` 使用源文档的值，实现格式迁移
+- 源文档中存在但目标文档中不存在的样式会被忽略（不会自动创建）
+
+### 解析有效样式
+
+解析某个命名样式的最终效果（合并 docDefaults → basedOn 链 → 自身属性）：
+
+```js
+const effective = doc.resolveEffectiveStyle("1");
+// { paragraphStyle: { keepNext: true, spacing: { before: "480", after: "80", ... } },
+//   runStyle: { fontSize: "48", color: "2F5496", ... } }
+```
+
+### 列出所有命名样式
+
+```js
+const named = doc.getNamedStyles();
+// [ { styleId: "a", name: "Normal", type: "paragraph", basedOn: null }, ... ]
+```
 
 ```js
 const table = doc.getTables()[0];
@@ -598,6 +730,9 @@ npm test
 - 段落样式和 run 样式解析
 - 样式新增、修改、清空
 - 样式在组件之间迁移
+- `word/styles.xml` 解析（docDefaults、命名样式、主题字体）
+- 样式继承链解析（basedOn 链 + docDefaults 合并）
+- 样式档案 JSON 导出 / 导入 / 保存回写
 - 真实样本文档回归
 
 ## 已知边界

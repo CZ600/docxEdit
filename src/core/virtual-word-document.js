@@ -28,16 +28,18 @@ const {
   resolveRelationshipTarget,
 } = require("./image-model");
 const { cloneVNode, createVNode, visitVNode } = require("./vnode");
+const stylesXmlModel = require("./styles-xml-model");
 const { replaceAllInText } = require("./text-utils");
 
 const MAIN_DOCUMENT_PATH = "word/document.xml";
 const CONTENT_TYPES_PATH = "[Content_Types].xml";
 
 class VirtualWordDocument {
-  constructor({ zip, partsData, relationshipsByPartPath }) {
+  constructor({ zip, partsData, relationshipsByPartPath, stylesData }) {
     this.zip = zip;
     this.partsData = partsData;
     this.relationshipsByPartPath = relationshipsByPartPath;
+    this.stylesData = stylesData || null;
     this.rootVNode = null;
     this.parts = [];
     this.nodeById = new Map();
@@ -71,7 +73,13 @@ class VirtualWordDocument {
       relationshipsByPartPath.set(descriptor.path, relationships);
     }
 
-    return new VirtualWordDocument({ zip, partsData, relationshipsByPartPath });
+    let stylesData = null;
+    if (zip.file(stylesXmlModel.STYLES_XML_PATH)) {
+      const stylesXml = await zip.file(stylesXmlModel.STYLES_XML_PATH).async("string");
+      stylesData = stylesXmlModel.parseStylesXml(parseXmlString(stylesXml));
+    }
+
+    return new VirtualWordDocument({ zip, partsData, relationshipsByPartPath, stylesData });
   }
 
   rebuildFromXml() {
@@ -294,6 +302,35 @@ class VirtualWordDocument {
     }
   }
 
+  getStyleProfile() {
+    if (!this.stylesData) {
+      return { defaults: { paragraphStyle: {}, runStyle: {} }, styles: {} };
+    }
+    return stylesXmlModel.extractStyleProfile(this.stylesData);
+  }
+
+  applyStyleProfile(profile) {
+    if (!this.stylesData) return;
+    stylesXmlModel.applyStyleProfileToData(this.stylesData, profile);
+  }
+
+  resolveEffectiveStyle(styleId) {
+    if (!this.stylesData) {
+      return { paragraphStyle: {}, runStyle: {} };
+    }
+    return stylesXmlModel.resolveEffectiveStyle(this.stylesData, styleId);
+  }
+
+  getNamedStyles() {
+    if (!this.stylesData) return [];
+    return Array.from(this.stylesData.styles.values()).map((s) => ({
+      styleId: s.styleId,
+      name: s.name,
+      type: s.type,
+      basedOn: s.basedOn,
+    }));
+  }
+
   getRelationships(partPath) {
     let relationships = this.relationshipsByPartPath.get(partPath);
     if (!relationships) {
@@ -370,6 +407,11 @@ class VirtualWordDocument {
     for (const part of this.partsData) {
       const xml = new XMLSerializer().serializeToString(part.xmlDocument);
       this.zip.file(part.path, xml);
+    }
+
+    if (this.stylesData) {
+      const xml = stylesXmlModel.serializeStylesXml(this.stylesData);
+      this.zip.file(stylesXmlModel.STYLES_XML_PATH, xml);
     }
 
     for (const relationships of this.relationshipsByPartPath.values()) {

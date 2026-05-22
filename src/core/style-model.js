@@ -90,9 +90,13 @@ function parseRunStyle(runElement) {
   if (fonts) {
     style.fontFamily = compactObject({
       ascii: getWordAttribute(fonts, "ascii"),
+      asciiTheme: getWordAttribute(fonts, "asciiTheme"),
       hAnsi: getWordAttribute(fonts, "hAnsi"),
+      hAnsiTheme: getWordAttribute(fonts, "hAnsiTheme"),
       eastAsia: getWordAttribute(fonts, "eastAsia"),
+      eastAsiaTheme: getWordAttribute(fonts, "eastAsiaTheme"),
       cs: getWordAttribute(fonts, "cs"),
+      cstheme: getWordAttribute(fonts, "cstheme"),
     });
   }
 
@@ -249,7 +253,7 @@ function applyRunStyle(runElement, style) {
     syncValueChild(rPr, "w:color", normalized.color),
     syncValueChild(rPr, "w:highlight", normalized.highlight),
     syncValueChild(rPr, "w:sz", normalized.fontSize),
-    syncAttributeChild(rPr, "w:rFonts", normalized.fontFamily, ["ascii", "hAnsi", "eastAsia", "cs"]),
+    syncAttributeChild(rPr, "w:rFonts", normalized.fontFamily, ["ascii", "asciiTheme", "hAnsi", "hAnsiTheme", "eastAsia", "eastAsiaTheme", "cs", "cstheme"]),
   ];
 
   cleanupEmptyPropertyContainer(runElement, rPr);
@@ -566,6 +570,7 @@ module.exports = {
   applyTableRowStyle,
   applyTableStyle,
   cloneStyle,
+  compactObject,
   parseParagraphStyle,
   parseRunStyle,
   parseTableCellStyle,
