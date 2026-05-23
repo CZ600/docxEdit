@@ -15,12 +15,14 @@
 ## 特性
 
 - 解析正文、页眉、页脚、批注、脚注、尾注
-- 识别 `paragraph`、`run`、`text`、`table`、`table-row`、`table-cell`、`hyperlink`、`text-box`
+- 识别 `paragraph`、`run`、`text`、`table`、`table-row`、`table-cell`、`hyperlink`、`text-box`、`image`、`math`
 - 支持段落跨多个 `w:t` 的整段文本读取和回写
 - 支持真正的虚拟树 `diff / patch`
 - 支持段落样式和 run 样式的建模、修改和迁移
 - 兼容旧控制器 API，旧写接口内部自动转为虚拟树 patch
 - 保存修改后的 `.docx`
+- 提取全文内容为 HTML（支持标题分级、数学公式、表格）
+- 解析标题级别（支持中文/英文样式 ID）
 
 ## 安装
 
@@ -90,6 +92,8 @@ document
 - `comment`
 - `footnote`
 - `endnote`
+- `image`
+- `math`
 
 ## 内部写入流程
 
@@ -277,6 +281,63 @@ doc.getComments();
 doc.replaceAll("活动", "主题活动");
 doc.replaceAll(/2025/g, "2026");
 doc.replaceAll("页眉", "新页眉", { partTypes: ["header"] });
+```
+
+### `doc.extractHtml(options?)`
+
+提取全文内容为简单 HTML 格式。
+
+- `options.partTypes?: string[]` — 提取哪些部分，默认 `["body"]`，可选 `"body"`、`"headers"`、`"footers"`
+
+输出格式：
+
+- 标题：`<h1>` ~ `<h6>`（根据 `resolveHeadingLevel` 自动识别）
+- 正文：`<p>`
+- 加粗/斜体/下划线/删除线：`<strong>` / `<em>` / `<u>` / `<s>`
+- 行内公式：`<span class="math">...</span>`
+- 块级公式：`<div class="math-block">...</div>`
+- 表格：`<table>` / `<tr>` / `<td>`（支持 colspan）
+- 图片：`<img alt="..." />`
+- 换行：`<br>`
+
+```js
+const html = doc.extractHtml();
+fs.writeFileSync("output.html", html);
+```
+
+### `doc.resolveHeadingLevel(styleId)`
+
+根据 styleId 解析标题级别。
+
+- `styleId: string` — 段落样式的 styleId
+- 返回：`1`~`9`（标题级别）或 `null`
+
+解析优先级：
+
+1. 样式继承链中的 `outlineLevel`（最可靠）
+2. 样式名称匹配（支持 "标题 1"~"标题 9" 和 "heading 1"~"heading 9"）
+3. styleId 直接匹配（`Heading1`~`Heading9`）
+
+```js
+doc.resolveHeadingLevel("Heading1"); // 1
+doc.resolveHeadingLevel("1");        // 1（中文 Word）
+```
+
+### `paragraph.getHeadingLevel()`
+
+便捷方法，直接获取段落的标题级别。
+
+- 返回：`1`~`9` 或 `null`
+
+```js
+for (const p of doc.getBody().getParagraphs()) {
+  const level = p.getHeadingLevel();
+  if (level) {
+    console.log(`标题 ${level}: ${p.getText()}`);
+  } else {
+    console.log(`正文: ${p.getText()}`);
+  }
+}
 ```
 
 ## 控制器 API
@@ -734,6 +795,8 @@ npm test
 - 样式继承链解析（basedOn 链 + docDefaults 合并）
 - 样式档案 JSON 导出 / 导入 / 保存回写
 - 真实样本文档回归
+- HTML 全文提取（标题分级、数学公式、表格、图片）
+- 标题级别解析（中英文样式 ID）
 
 ## 已知边界
 

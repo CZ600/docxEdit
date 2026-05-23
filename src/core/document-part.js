@@ -136,6 +136,11 @@ class ParagraphController extends BaseController {
     return this.setStyle(otherParagraph.getStyle());
   }
 
+  getHeadingLevel() {
+    const styleId = (this.vnode.props.style || {}).styleId;
+    return this.doc.resolveHeadingLevel(styleId);
+  }
+
   getRuns() {
     return this.doc.getDescendantControllers(this.nodeId, "run");
   }

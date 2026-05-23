@@ -28,6 +28,17 @@ function parseParagraphStyle(paragraphElement) {
   assignOnOffStyle(style, "keepNext", getDirectChild(pPr, "w:keepNext"));
   assignOnOffStyle(style, "keepLines", getDirectChild(pPr, "w:keepLines"));
   assignOnOffStyle(style, "pageBreakBefore", getDirectChild(pPr, "w:pageBreakBefore"));
+  assignOnOffStyle(style, "widowControl", getDirectChild(pPr, "w:widowControl"));
+
+  const outlineLvl = getDirectChild(pPr, "w:outlineLvl");
+  if (outlineLvl) {
+    style.outlineLevel = getWordAttribute(outlineLvl, "val");
+  }
+
+  const pBdr = getDirectChild(pPr, "w:pBdr");
+  if (pBdr) {
+    style.borders = parseBorders(pBdr, ["top", "left", "bottom", "right"]);
+  }
 
   if (spacing) {
     style.spacing = compactObject({
@@ -70,6 +81,11 @@ function parseRunStyle(runElement) {
 
   assignOnOffStyle(style, "bold", getDirectChild(rPr, "w:b"));
   assignOnOffStyle(style, "italic", getDirectChild(rPr, "w:i"));
+  assignOnOffStyle(style, "strike", getDirectChild(rPr, "w:strike"));
+  assignOnOffStyle(style, "doubleStrike", getDirectChild(rPr, "w:dstrike"));
+  assignOnOffStyle(style, "smallCaps", getDirectChild(rPr, "w:smallCaps"));
+  assignOnOffStyle(style, "caps", getDirectChild(rPr, "w:caps"));
+  assignOnOffStyle(style, "hidden", getDirectChild(rPr, "w:vanish"));
 
   if (underline) {
     style.underline = getWordAttribute(underline, "val") || "single";
@@ -85,6 +101,21 @@ function parseRunStyle(runElement) {
 
   if (size) {
     style.fontSize = getWordAttribute(size, "val");
+  }
+
+  const vertAlign = getDirectChild(rPr, "w:vertAlign");
+  if (vertAlign) {
+    style.vertAlign = getWordAttribute(vertAlign, "val");
+  }
+
+  const position = getDirectChild(rPr, "w:position");
+  if (position) {
+    style.position = getWordAttribute(position, "val");
+  }
+
+  const characterScale = getDirectChild(rPr, "w:w");
+  if (characterScale) {
+    style.characterScale = getWordAttribute(characterScale, "val");
   }
 
   if (fonts) {
@@ -230,6 +261,9 @@ function applyParagraphStyle(paragraphElement, style) {
     syncOnOffChild(pPr, "w:keepNext", normalized.keepNext),
     syncOnOffChild(pPr, "w:keepLines", normalized.keepLines),
     syncOnOffChild(pPr, "w:pageBreakBefore", normalized.pageBreakBefore),
+    syncOnOffChild(pPr, "w:widowControl", normalized.widowControl),
+    syncValueChild(pPr, "w:outlineLvl", normalized.outlineLevel),
+    syncBordersChild(pPr, "w:pBdr", normalized.borders, ["top", "left", "bottom", "right"]),
     syncAttributeChild(pPr, "w:spacing", normalized.spacing, ["before", "after", "line", "lineRule"]),
     syncAttributeChild(pPr, "w:ind", normalized.indent, ["left", "right", "firstLine", "hanging"]),
   ];
@@ -249,10 +283,18 @@ function applyRunStyle(runElement, style) {
     syncValueChild(rPr, "w:rStyle", normalized.styleId),
     syncOnOffChild(rPr, "w:b", normalized.bold),
     syncOnOffChild(rPr, "w:i", normalized.italic),
+    syncOnOffChild(rPr, "w:strike", normalized.strike),
+    syncOnOffChild(rPr, "w:dstrike", normalized.doubleStrike),
+    syncOnOffChild(rPr, "w:smallCaps", normalized.smallCaps),
+    syncOnOffChild(rPr, "w:caps", normalized.caps),
+    syncOnOffChild(rPr, "w:vanish", normalized.hidden),
     syncValueChild(rPr, "w:u", normalized.underline),
     syncValueChild(rPr, "w:color", normalized.color),
     syncValueChild(rPr, "w:highlight", normalized.highlight),
     syncValueChild(rPr, "w:sz", normalized.fontSize),
+    syncValueChild(rPr, "w:vertAlign", normalized.vertAlign),
+    syncValueChild(rPr, "w:position", normalized.position),
+    syncValueChild(rPr, "w:w", normalized.characterScale),
     syncAttributeChild(rPr, "w:rFonts", normalized.fontFamily, ["ascii", "asciiTheme", "hAnsi", "hAnsiTheme", "eastAsia", "eastAsiaTheme", "cs", "cstheme"]),
   ];
 

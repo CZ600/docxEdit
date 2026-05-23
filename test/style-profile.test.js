@@ -16,7 +16,7 @@ const {
 } = require("../src/core/styles-xml-model");
 const { parseXmlString } = require("../src/core/document-part");
 
-const SAMPLE_DOCX = path.resolve(__dirname, "..", "测试文档.docx");
+const SAMPLE_DOCX = path.resolve(__dirname, "..", "tests", "test-docx", "测试文档.docx");
 
 describe("styles-xml-model: parseStylesXml", () => {
   it("parses styles.xml from a real document", async () => {

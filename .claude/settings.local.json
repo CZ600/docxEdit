@@ -5,7 +5,15 @@
       "Bash(node -e ' *)",
       "Bash(node -e \"const {loadDocx} = require\\('./src'\\); console.log\\('load OK'\\)\")",
       "Bash(node --test test/style-profile.test.js)",
-      "Bash(node test/cross-file-format-clone.js)"
+      "Bash(node test/cross-file-format-clone.js)",
+      "Bash(node -e \"const {loadDocx} = require\\('./src'\\); console.log\\('OK'\\)\")",
+      "Bash(node --test test/style-extended.test.js)",
+      "Bash(npm version *)",
+      "Bash(node --test test/style-profile.test.js test/style-extended.test.js)",
+      "Bash(npm pack *)",
+      "Bash(npm whoami *)",
+      "Bash(npm config *)",
+      "Bash(npm publish *)"
     ]
   }
 }

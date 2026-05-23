@@ -29,6 +29,7 @@ const {
 } = require("./image-model");
 const { cloneVNode, createVNode, visitVNode } = require("./vnode");
 const stylesXmlModel = require("./styles-xml-model");
+const { extractHtml } = require("./html-extract");
 const { replaceAllInText } = require("./text-utils");
 
 const MAIN_DOCUMENT_PATH = "word/document.xml";
@@ -319,6 +320,34 @@ class VirtualWordDocument {
       return { paragraphStyle: {}, runStyle: {} };
     }
     return stylesXmlModel.resolveEffectiveStyle(this.stylesData, styleId);
+  }
+
+  resolveHeadingLevel(styleId) {
+    if (!styleId) return null;
+
+    if (this.stylesData) {
+      const effective = stylesXmlModel.resolveEffectiveStyle(this.stylesData, styleId);
+      const outlineLevel = effective.paragraphStyle.outlineLevel;
+      if (outlineLevel != null) {
+        const level = parseInt(outlineLevel, 10);
+        if (level >= 0 && level <= 8) return level + 1;
+      }
+
+      const style = this.stylesData.styles.get(styleId);
+      if (style && style.name) {
+        const nameMatch = /(?:标题|heading)\s*(\d)/i.exec(style.name);
+        if (nameMatch) return parseInt(nameMatch[1], 10);
+      }
+    }
+
+    const headingMatch = /^heading\s*(\d)$/i.exec(styleId);
+    if (headingMatch) return parseInt(headingMatch[1], 10);
+
+    return null;
+  }
+
+  extractHtml(options) {
+    return extractHtml(this, options);
   }
 
   getNamedStyles() {
