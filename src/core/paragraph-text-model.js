@@ -13,6 +13,10 @@ function isWritableToken(token) {
   return token.kind === "text";
 }
 
+function getReferenceId(element) {
+  return element.getAttribute("w:id") || element.getAttribute("id") || "";
+}
+
 function collectRunTokens(runElement, tokens) {
   for (const child of childElements(runElement)) {
     if (isElement(child, "w:t")) {
@@ -39,6 +43,25 @@ function collectRunTokens(runElement, tokens) {
         value: "\n",
         element: child,
       });
+      continue;
+    }
+
+    if (isElement(child, "w:footnoteReference")) {
+      tokens.push({
+        kind: "footnoteReference",
+        value: `[[FOOTNOTE_REF:${getReferenceId(child)}]]`,
+        element: child,
+      });
+      continue;
+    }
+
+    if (isElement(child, "w:endnoteReference")) {
+      tokens.push({
+        kind: "endnoteReference",
+        value: `[[ENDNOTE_REF:${getReferenceId(child)}]]`,
+        element: child,
+      });
+      continue;
     }
   }
 }

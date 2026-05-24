@@ -298,6 +298,11 @@ class VirtualWordDocument {
       case "footnote":
       case "endnote":
         return new StructuredEntryController(this, nodeId);
+      case "footnoteReference":
+      case "endnoteReference":
+      case "footnoteRef":
+      case "endnoteRef":
+        return new BaseController(this, nodeId);
       default:
         throw new Error(`Unsupported controller node type "${node.type}".`);
     }
@@ -367,6 +372,88 @@ class VirtualWordDocument {
       this.relationshipsByPartPath.set(partPath, relationships);
     }
     return relationships;
+  }
+
+  addFootnote(text) {
+    this.ensureFootnotesPart();
+
+    const partData = this.partsData.find((p) => p.type === "footnotes");
+    const xmlDocument = partData.xmlDocument;
+    const rootElement = xmlDocument.documentElement;
+    const WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+    // Find max user footnote ID (skip special types like separator)
+    let maxUserId = -1;
+    const footnoteElements = rootElement.getElementsByTagName("w:footnote");
+    for (let i = 0; i < footnoteElements.length; i += 1) {
+      const fn = footnoteElements[i];
+      const type = fn.getAttribute("w:type");
+      if (type) continue;
+      const id = parseInt(fn.getAttribute("w:id"), 10);
+      if (!isNaN(id) && id > maxUserId) maxUserId = id;
+    }
+    const nextId = maxUserId + 1;
+
+    // Build <w:footnote w:id="nextId"><w:p><w:r><w:footnoteRef/></w:r><w:r><w:t> </w:t></w:r><w:r><w:t>text</w:t></w:r></w:p></w:footnote>
+    const footnote = xmlDocument.createElementNS(WORD_NS, "w:footnote");
+    footnote.setAttribute("w:id", String(nextId));
+
+    const paragraph = xmlDocument.createElementNS(WORD_NS, "w:p");
+
+    // Run with <w:footnoteRef/>
+    const run1 = xmlDocument.createElementNS(WORD_NS, "w:r");
+    run1.appendChild(xmlDocument.createElementNS(WORD_NS, "w:footnoteRef"));
+    paragraph.appendChild(run1);
+
+    // Run with space
+    const run2 = xmlDocument.createElementNS(WORD_NS, "w:r");
+    const spaceText = xmlDocument.createElementNS(WORD_NS, "w:t");
+    spaceText.setAttribute("xml:space", "preserve");
+    spaceText.appendChild(xmlDocument.createTextNode(" "));
+    run2.appendChild(spaceText);
+    paragraph.appendChild(run2);
+
+    // Run with content
+    const run3 = xmlDocument.createElementNS(WORD_NS, "w:r");
+    const contentText = xmlDocument.createElementNS(WORD_NS, "w:t");
+    contentText.appendChild(xmlDocument.createTextNode(text));
+    run3.appendChild(contentText);
+    paragraph.appendChild(run3);
+
+    footnote.appendChild(paragraph);
+    rootElement.appendChild(footnote);
+
+    this.rebuildFromXml();
+    return nextId;
+  }
+
+  ensureFootnotesPart() {
+    const existing = this.partsData.find((p) => p.type === "footnotes");
+    if (existing) return;
+
+    const footnotesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="w14"><w:footnote w:type="separator" w:id="8"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:type="continuationSeparator" w:id="9"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote></w:footnotes>';
+
+    const footnotesPath = "word/footnotes.xml";
+    this.partsData.push({
+      path: footnotesPath,
+      type: "footnotes",
+      xmlDocument: parseXmlString(footnotesXml),
+    });
+
+    this.zip.file(footnotesPath, footnotesXml);
+
+    // Add relationship from document.xml to footnotes.xml
+    const rels = this.getRelationships(MAIN_DOCUMENT_PATH);
+    const relId = nextRelationshipId(rels);
+    rels.relationships.set(relId, {
+      id: relId,
+      type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes",
+      target: "footnotes.xml",
+      targetMode: null,
+      partPath: MAIN_DOCUMENT_PATH,
+    });
+
+    this.rebuildFromXml();
   }
 
   createOrUpdateImage(partPath, imageNode) {

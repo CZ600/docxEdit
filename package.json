@@ -1,6 +1,6 @@
 {
   "name": "docx-edit",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "description": "A JS library that parses DOCX into a virtual component tree and writes paragraph-level text changes back to split OOXML runs.",
   "main": "src/index.js",
   "exports": {

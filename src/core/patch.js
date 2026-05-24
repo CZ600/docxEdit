@@ -27,7 +27,7 @@ const ALLOWED_CHILDREN = new Map([
   ["footnote", new Set(["paragraph", "table"])],
   ["endnote", new Set(["paragraph", "table"])],
   ["paragraph", new Set(["run", "hyperlink", "math"])],
-  ["run", new Set(["text", "tab", "break", "text-box", "image"])],
+  ["run", new Set(["text", "tab", "break", "text-box", "image", "footnoteReference", "endnoteReference", "footnoteRef", "endnoteRef"])],
   ["hyperlink", new Set(["run"])],
   ["math", new Set([])],
   ["text-box", new Set(["paragraph", "table"])],
@@ -194,6 +194,20 @@ function syncNodeProps(currentNode, nextNode, hostElement, operations, context) 
       operations.push({ type: "PROPS/TEXT_UPDATE", nodeId: currentNode.id, nodeType: currentNode.type });
     }
 
+    return true;
+  }
+
+  if (nextNode.type === "footnoteReference" || nextNode.type === "endnoteReference") {
+    const nextId = nextNode.props.id ?? null;
+    const currentId = currentNode.props.id ?? null;
+    if (String(nextId) !== String(currentId)) {
+      hostElement.setAttribute("w:id", String(nextId));
+      operations.push({ type: "PROPS/TEXT_UPDATE", nodeId: currentNode.id, nodeType: currentNode.type });
+    }
+    return true;
+  }
+
+  if (nextNode.type === "footnoteRef" || nextNode.type === "endnoteRef") {
     return true;
   }
 
@@ -428,6 +442,17 @@ function createHostSubtree(vnode, ownerDocument, operations, context) {
     return element;
   }
 
+  if (vnode.type === "footnoteReference" || vnode.type === "endnoteReference") {
+    if (vnode.props.id != null) {
+      element.setAttribute("w:id", String(vnode.props.id));
+    }
+    return element;
+  }
+
+  if (vnode.type === "footnoteRef" || vnode.type === "endnoteRef") {
+    return element;
+  }
+
   for (const child of vnode.children) {
     validateChildType(vnode.type, child.type);
     element.appendChild(createHostSubtree(child, ownerDocument, operations, context));
@@ -461,6 +486,12 @@ function createHostElement(vnode, ownerDocument) {
     case "comment": return createWordElement(ownerDocument, "w:comment");
     case "footnote": return createWordElement(ownerDocument, "w:footnote");
     case "endnote": return createWordElement(ownerDocument, "w:endnote");
+    case "footnote": return createWordElement(ownerDocument, "w:footnote");
+    case "endnote": return createWordElement(ownerDocument, "w:endnote");
+    case "footnoteReference": return createWordElement(ownerDocument, "w:footnoteReference");
+    case "endnoteReference": return createWordElement(ownerDocument, "w:endnoteReference");
+    case "footnoteRef": return createWordElement(ownerDocument, "w:footnoteRef");
+    case "endnoteRef": return createWordElement(ownerDocument, "w:endnoteRef");
     case "image": return ownerDocument.createElementNS("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "w:drawing");
     case "math": return vnode.props.display === "block"
       ? createMathElement(ownerDocument, "m:oMathPara")

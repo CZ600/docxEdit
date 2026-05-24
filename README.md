@@ -15,11 +15,14 @@
 ## 特性
 
 - 解析正文、页眉、页脚、批注、脚注、尾注
-- 识别 `paragraph`、`run`、`text`、`table`、`table-row`、`table-cell`、`hyperlink`、`text-box`、`image`、`math`
-- 支持段落跨多个 `w:t` 的整段文本读取和回写
+- 识别 `paragraph`、`run`、`text`、`table`、`table-row`、`table-cell`、`hyperlink`、`text-box`、`image`、`math`、`footnoteReference`、`endnoteReference`
+- 支持段落跨多个 `w:t` 的整段文本读取和回写（保留脚注引用和数学公式占位符）
 - 支持真正的虚拟树 `diff / patch`
 - 支持段落样式和 run 样式的建模、修改和迁移
 - 兼容旧控制器 API，旧写接口内部自动转为虚拟树 patch
+- 支持上标（superscript）和下标（subscript）样式读写
+- 支持脚注引用（footnoteReference）的读取、写入和新建
+- 支持尾注引用（endnoteReference）的读取和写入
 - 保存修改后的 `.docx`
 - 提取全文内容为 HTML（支持标题分级、数学公式、表格）
 - 解析标题级别（支持中文/英文样式 ID）
@@ -92,6 +95,10 @@ document
 - `comment`
 - `footnote`
 - `endnote`
+- `footnoteReference`
+- `endnoteReference`
+- `footnoteRef`
+- `endnoteRef`
 - `image`
 - `math`
 
@@ -111,6 +118,16 @@ document
 - 尽量保留原有 `w:r / w:t`
 - 尽量保留 `tab / break`
 - 只将新的文本重新分配回原有文本节点
+
+### 段落文本中的特殊占位符
+
+读取段落文本时，脚注引用和数学公式会以占位符形式出现在文本中：
+
+- `[[FOOTNOTE_REF:id]]` — 脚注引用
+- `[[ENDNOTE_REF:id]]` — 尾注引用
+- `[[MATH:text]]` — 数学公式
+
+修改段落文本时，这些占位符会被自动保留，不会被覆盖。
 
 ## 样式模型
 
@@ -154,6 +171,7 @@ document
   color: "FF0000",
   highlight: "yellow",
   fontSize: "28",
+  vertAlign: "superscript",  // "superscript" | "subscript" | null
   fontFamily: {
     ascii: "Calibri",
     asciiTheme: "minorHAnsi",
@@ -253,7 +271,55 @@ const buffer = await doc.toBuffer();
 await doc.saveAs("./sample.modified.docx");
 ```
 
-### 文档级查询接口
+### `doc.addFootnote(text)`
+
+创建一条新脚注，返回脚注 ID。可用于后续在段落中插入脚注引用。
+
+- `text: string` — 脚注内容文本
+- 返回：`number` — 脚注 ID
+
+对于没有 `footnotes.xml` 的文档，会自动创建。
+
+```js
+const doc = await loadDocx("./sample.docx");
+
+// 创建脚注，获取 ID
+const fnId = doc.addFootnote("这是脚注内容");
+
+// 在段落中引用该脚注
+const tree = doc.toComponentTree();
+const body = tree.children.find((node) => node.type === "body");
+
+body.children.push(
+  createVNode({
+    type: "paragraph",
+    props: { text: "正文内容" },
+    children: [
+      createVNode({
+        type: "run",
+        props: { text: "正文内容" },
+        children: [],
+      }),
+      createVNode({
+        type: "run",
+        props: {
+          style: { vertAlign: "superscript" },
+        },
+        children: [
+          createVNode({
+            type: "footnoteReference",
+            props: { id: String(fnId) },
+            children: [],
+          }),
+        ],
+      }),
+    ],
+  }),
+);
+
+await doc.patch(tree);
+await doc.saveAs("./sample.modified.docx");
+```
 
 ```js
 doc.getParts();
@@ -739,6 +805,56 @@ comments.children[0].children[0].props.text = "新的批注内容";
 await doc.patch(tree);
 ```
 
+### 9. 创建带脚注引用的段落
+
+```js
+const { createVNode, loadDocx } = require("docx-edit");
+
+const doc = await loadDocx("./sample.docx");
+
+// 创建脚注
+const fnId = doc.addFootnote("脚注说明文字");
+
+// 构建带脚注引用的段落
+const tree = doc.toComponentTree();
+const body = tree.children.find((node) => node.type === "body");
+
+body.children.push(
+  createVNode({
+    type: "paragraph",
+    props: { text: "这段话有脚注[[FOOTNOTE_REF:" + fnId + "]]。" },
+    children: [
+      createVNode({
+        type: "run",
+        props: { text: "这段话有脚注" },
+        children: [],
+      }),
+      createVNode({
+        type: "run",
+        props: { style: { vertAlign: "superscript" } },
+        children: [
+          createVNode({
+            type: "footnoteReference",
+            props: { id: String(fnId) },
+            children: [],
+          }),
+        ],
+      }),
+      createVNode({
+        type: "run",
+        props: { text: "。" },
+        children: [],
+      }),
+    ],
+  }),
+);
+
+await doc.patch(tree);
+await doc.saveAs("./sample.modified.docx");
+```
+
+> **注意**：`paragraph.props.text` 包含占位符用于文本匹配（如 `replaceAll`），但实际 XML 结构由 `children` 中的 `run` 节点决定。`footnoteReference` 节点必须作为 `run` 的子节点。
+
 ## `createVNode()` 说明
 
 `createVNode()` 用来手动创建新节点。
@@ -797,6 +913,11 @@ npm test
 - 真实样本文档回归
 - HTML 全文提取（标题分级、数学公式、表格、图片）
 - 标题级别解析（中英文样式 ID）
+- 上标（superscript）/ 下标（subscript）样式读写
+- 脚注引用（footnoteReference）读取、写入和 round-trip
+- 尾注引用（endnoteReference）读取和写入
+- 数学公式（math）读取、写入和 round-trip
+- 新建脚注（`addFootnote`）— 含已有/无脚注的文档
 
 ## 已知边界
 
